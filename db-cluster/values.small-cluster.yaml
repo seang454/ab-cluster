@@ -1,0 +1,54 @@
+# Small-cluster override for 3 worker nodes with limited schedulable CPU.
+# Keeps PostgreSQL, MongoDB, and Redis enabled, and disables MySQL/Cassandra.
+
+postgresql:
+  enabled: true
+  operator:
+    enabled: true
+  cluster:
+    instances: 3
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "512Mi"
+      limits:
+        cpu: "1000m"
+        memory: "2Gi"
+
+mongodb:
+  enabled: true
+  operator:
+    enabled: true
+  cluster:
+    instances: 3
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "768Mi"
+      limits:
+        cpu: "1000m"
+        memory: "2Gi"
+
+mysql:
+  enabled: false
+  operator:
+    enabled: false
+
+redis:
+  enabled: true
+  operator:
+    enabled: true
+  cluster:
+    instances: 3
+    resources:
+      requests:
+        cpu: "75m"
+        memory: "128Mi"
+      limits:
+        cpu: "250m"
+        memory: "512Mi"
+
+cassandra:
+  enabled: false
+  operator:
+    enabled: false

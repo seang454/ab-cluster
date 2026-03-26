@@ -8,7 +8,7 @@
 #   ./setup.sh status      → show pods
 #   ./setup.sh <step>      → run one step
 #
-# STEPS (in order): repos, longhorn, deps, vault_transit,
+# STEPS (in order): preflight, repos, longhorn, deps, vault_transit,
 #                   vault_install, vault_init, install_operators, deploy
 #
 # Create .env file with passwords before running:
@@ -22,6 +22,8 @@ VAULT_NS="vault"
 TRANSIT_NS="vault-transit"
 CHART_DIR="./db-cluster"
 LONGHORN_REPLICA_COUNT="${LONGHORN_REPLICA_COUNT:-1}"
+OPERATOR_INSTALLER="${OPERATOR_INSTALLER:-./install-operators.sh}"
+VALUES_FILE="${VALUES_FILE:-}"
 
 [ -f .env ] && { set -a; source .env; set +a; }
 
@@ -41,6 +43,57 @@ retry() {
         sleep "$WAIT"
     done
     return 1
+}
+
+values_args() {
+    if [ -n "$VALUES_FILE" ]; then
+        [ -f "$VALUES_FILE" ] || die "VALUES_FILE not found: $VALUES_FILE"
+        printf -- '-f\n%s\n' "$VALUES_FILE"
+    fi
+}
+
+schedulable_worker_cpu_millis() {
+    kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .spec.taints[*]}{.key}{","}{end}{"\t"}{.status.allocatable.cpu}{"\n"}{end}' 2>/dev/null \
+        | awk -F '\t' '
+            $2 !~ /node-role.kubernetes.io\/control-plane/ && $2 !~ /node-role.kubernetes.io\/master/ {
+                cpu=$3
+                if (cpu ~ /m$/) sub(/m$/, "", cpu)
+                else cpu=cpu * 1000
+                total += cpu
+            }
+            END {print total + 0}
+        '
+}
+
+required_profile_cpu_millis() {
+    case "$VALUES_FILE" in
+        *values.small-cluster.yaml) echo 1425 ;;
+        *) echo 6300 ;;
+    esac
+}
+
+preflight() {
+    log "[0/9] Running preflight checks..."
+    command -v kubectl >/dev/null 2>&1 || die "kubectl not found"
+    command -v helm >/dev/null 2>&1 || die "helm not found"
+    kubectl version --client >/dev/null 2>&1 || die "kubectl is not working"
+    kubectl get nodes >/dev/null 2>&1 || die "Cannot reach the Kubernetes API"
+
+    local WORKER_CPU REQUIRED_CPU PROFILE_LABEL
+    WORKER_CPU="$(schedulable_worker_cpu_millis)"
+    REQUIRED_CPU="$(required_profile_cpu_millis)"
+    PROFILE_LABEL="default"
+    [ -n "$VALUES_FILE" ] && PROFILE_LABEL="$VALUES_FILE"
+
+    info "Selected values profile: $PROFILE_LABEL"
+    info "Schedulable worker CPU: ${WORKER_CPU}m"
+    info "Minimum database CPU required by profile: ${REQUIRED_CPU}m"
+
+    if [ "${WORKER_CPU:-0}" -lt "$REQUIRED_CPU" ]; then
+        die "Cluster is too small for this profile. Use VALUES_FILE=./db-cluster/values.small-cluster.yaml for this 3-worker cluster."
+    fi
+
+    ok "Preflight checks passed"
 }
 
 wait_for_pods_ready() {
@@ -597,8 +650,14 @@ deploy() {
     kubectl delete role my-db-vault-auth-secret-reader -n "$NAMESPACE" --ignore-not-found 2>/dev/null || true
     kubectl delete rolebinding my-db-vault-auth-secret-reader -n "$NAMESPACE" --ignore-not-found 2>/dev/null || true
 
+    local HELM_VALUES_ARGS=()
+    if [ -n "$VALUES_FILE" ]; then
+        mapfile -t HELM_VALUES_ARGS < <(values_args)
+    fi
+
     helm upgrade --install "$RELEASE" "$CHART_DIR" \
         --namespace "$NAMESPACE" --create-namespace \
+        "${HELM_VALUES_ARGS[@]}" \
         --set "certManager.enabled=false" \
         --set "externalSecrets.enabled=false" \
         --set "longhorn.enabled=false" \
@@ -648,6 +707,13 @@ deploy() {
     kubectl get pods -n "$NAMESPACE"
 }
 
+operator_plugins() {
+    [ -x "$OPERATOR_INSTALLER" ] || die "Operator installer not found or not executable: $OPERATOR_INSTALLER"
+    log "[9/9] Running operator installer script..."
+    "$OPERATOR_INSTALLER" all || die "Operator installer script failed"
+    ok "Operator installer script completed"
+}
+
 # =============================================================================
 # FULL SETUP
 # =============================================================================
@@ -657,6 +723,7 @@ setup() {
     echo " db-cluster setup starting..."
     echo "============================================="
 
+    preflight       || die "Step preflight failed"
     repos           || die "Step repos failed"
     longhorn        || die "Step longhorn failed"
     deps            || die "Step deps failed"
@@ -665,13 +732,19 @@ setup() {
     vault_init      || die "Step vault_init failed"
     install_operators || die "Step install_operators failed"
     deploy          || die "Step deploy failed"
+    operator_plugins || die "Step operator_plugins failed"
 
     echo ""
     echo "============================================="
     echo " ✓ Setup complete!"
     echo "   ./setup.sh status   — see all pods"
     echo "   ./setup.sh clusters — see DB health"
+    echo "   ./setup.sh operator_plugins — rerun operator installer script"
     echo "============================================="
+}
+
+small_setup() {
+    VALUES_FILE="./db-cluster/values.small-cluster.yaml" setup
 }
 
 # =============================================================================
@@ -775,8 +848,13 @@ sync() {
 upgrade() {
     : "${PG_PASS:?}" ; : "${MONGO_PASS:?}" ; : "${MYSQL_PASS:?}"
     : "${REDIS_PASS:?}" ; : "${CASS_PASS:?}"
+    local HELM_VALUES_ARGS=()
+    if [ -n "$VALUES_FILE" ]; then
+        mapfile -t HELM_VALUES_ARGS < <(values_args)
+    fi
     helm upgrade "$RELEASE" "$CHART_DIR" \
         --namespace "$NAMESPACE" \
+        "${HELM_VALUES_ARGS[@]}" \
         --set "vault.postgresql.superuserPassword=$PG_PASS" \
         --set "vault.postgresql.appPassword=$PG_PASS" \
         --set "vault.mongodb.clusterAdminPassword=$MONGO_PASS" \
@@ -928,17 +1006,18 @@ teardown() {
 # =============================================================================
 usage() {
     echo "Usage: ./setup.sh [command]"
-    echo "Commands: setup teardown status clusters vault_status upgrade sync"
-    echo "          repos longhorn deps vault_transit vault_install vault_init"
-    echo "          install_operators deploy vault_list vault_get rotate"
+    echo "Env:    VALUES_FILE=./db-cluster/values.small-cluster.yaml ./setup.sh"
+    echo "Commands: setup small_setup teardown status clusters vault_status upgrade sync"
+    echo "          preflight repos longhorn deps vault_transit vault_install vault_init"
+    echo "          install_operators deploy operator_plugins vault_list vault_get rotate"
     echo "          pg mongo redis mysql cassandra vault_ui longhorn_ui"
 }
 
 CMD="${1:-setup}"; shift 2>/dev/null || true
 case "$CMD" in
-    setup|teardown|status|clusters|vault_status|upgrade|sync|usage|\
-    repos|longhorn|deps|vault_transit|vault_install|vault_init|\
-    install_operators|deploy|vault_list|vault_get|rotate|\
+    setup|small_setup|teardown|status|clusters|vault_status|upgrade|sync|usage|\
+    preflight|repos|longhorn|deps|vault_transit|vault_install|vault_init|\
+    install_operators|deploy|operator_plugins|vault_list|vault_get|rotate|\
     pg|mongo|redis|mysql|cassandra|vault_ui|longhorn_ui)
         "$CMD" "$@" ;;
     *) echo "Unknown: $CMD"; usage; exit 1 ;;
