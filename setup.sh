@@ -52,24 +52,205 @@ values_args() {
     fi
 }
 
-schedulable_worker_cpu_millis() {
-    kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .spec.taints[*]}{.key}{","}{end}{"\t"}{.status.allocatable.cpu}{"\n"}{end}' 2>/dev/null \
-        | awk -F '\t' '
-            $2 !~ /node-role.kubernetes.io\/control-plane/ && $2 !~ /node-role.kubernetes.io\/master/ {
-                cpu=$3
-                if (cpu ~ /m$/) sub(/m$/, "", cpu)
-                else cpu=cpu * 1000
-                total += cpu
-            }
-            END {print total + 0}
-        '
+schedulable_worker_report() {
+    kubectl get nodes -o json > /tmp/setup_nodes.json 2>/dev/null || return 1
+    kubectl get pods -A -o json > /tmp/setup_pods.json 2>/dev/null || return 1
+
+    python3 - /tmp/setup_nodes.json /tmp/setup_pods.json <<'PY'
+import json
+import math
+import sys
+
+nodes = json.load(open(sys.argv[1], "r", encoding="utf-8"))
+pods = json.load(open(sys.argv[2], "r", encoding="utf-8"))
+
+def cpu_to_millis(value):
+    if not value:
+        return 0
+    if isinstance(value, (int, float)):
+        return int(float(value) * 1000)
+    value = str(value)
+    return int(value[:-1]) if value.endswith("m") else int(float(value) * 1000)
+
+def mem_to_mib(value):
+    if not value:
+        return 0
+    value = str(value)
+    units = {
+        "Ki": 1 / 1024,
+        "Mi": 1,
+        "Gi": 1024,
+        "Ti": 1024 * 1024,
+        "K": 1000 / (1024 * 1024),
+        "M": 1000 * 1000 / (1024 * 1024),
+        "G": 1000 * 1000 * 1000 / (1024 * 1024),
+    }
+    for suffix, factor in units.items():
+        if value.endswith(suffix):
+            return int(math.ceil(float(value[:-len(suffix)]) * factor))
+    return int(math.ceil(float(value) / (1024 * 1024)))
+
+eligible = {}
+for item in nodes["items"]:
+    name = item["metadata"]["name"]
+    taints = item.get("spec", {}).get("taints", []) or []
+    if taints:
+        continue
+    alloc = item["status"]["allocatable"]
+    eligible[name] = {
+        "alloc_cpu_m": cpu_to_millis(alloc.get("cpu")),
+        "alloc_mem_mib": mem_to_mib(alloc.get("memory")),
+        "req_cpu_m": 0,
+        "req_mem_mib": 0,
+    }
+
+for pod in pods["items"]:
+    node_name = pod.get("spec", {}).get("nodeName")
+    if node_name not in eligible:
+        continue
+    phase = pod.get("status", {}).get("phase")
+    if phase in {"Succeeded", "Failed"}:
+        continue
+    for container in pod.get("spec", {}).get("containers", []):
+        req = container.get("resources", {}).get("requests", {})
+        eligible[node_name]["req_cpu_m"] += cpu_to_millis(req.get("cpu"))
+        eligible[node_name]["req_mem_mib"] += mem_to_mib(req.get("memory"))
+
+total_alloc_cpu = total_alloc_mem = total_req_cpu = total_req_mem = 0
+for name in sorted(eligible):
+    item = eligible[name]
+    avail_cpu = item["alloc_cpu_m"] - item["req_cpu_m"]
+    avail_mem = item["alloc_mem_mib"] - item["req_mem_mib"]
+    total_alloc_cpu += item["alloc_cpu_m"]
+    total_alloc_mem += item["alloc_mem_mib"]
+    total_req_cpu += item["req_cpu_m"]
+    total_req_mem += item["req_mem_mib"]
+    print(f"{name}\t{item['alloc_cpu_m']}\t{item['alloc_mem_mib']}\t{item['req_cpu_m']}\t{item['req_mem_mib']}\t{avail_cpu}\t{avail_mem}")
+
+print(f"TOTAL\t{total_alloc_cpu}\t{total_alloc_mem}\t{total_req_cpu}\t{total_req_mem}\t{total_alloc_cpu-total_req_cpu}\t{total_alloc_mem-total_req_mem}")
+PY
 }
 
-required_profile_cpu_millis() {
-    case "$VALUES_FILE" in
-        *values.small-cluster.yaml) echo 1425 ;;
-        *) echo 6300 ;;
-    esac
+required_profile_resources() {
+    local PROFILE_FILE
+    PROFILE_FILE="${VALUES_FILE:-$CHART_DIR/values.yaml}"
+    [ -f "$PROFILE_FILE" ] || die "Values file not found: $PROFILE_FILE"
+
+    python3 - "$PROFILE_FILE" <<'PY'
+import re
+import sys
+
+path = sys.argv[1]
+lines = open(path, "r", encoding="utf-8").read().splitlines()
+dbs = ["postgresql", "mongodb", "mysql", "redis", "cassandra"]
+data = {db: {"enabled": False, "instances": 0, "cpu_m": 0, "mem_mib": 0} for db in dbs}
+
+section = None
+in_cluster = False
+in_resources = False
+in_requests = False
+
+def cpu_to_millis(value: str) -> int:
+    value = value.strip().strip('"').strip("'")
+    if not value:
+        return 0
+    if value.endswith("m"):
+        return int(value[:-1])
+    return int(float(value) * 1000)
+
+def mem_to_mib(value: str) -> int:
+    value = value.strip().strip('"').strip("'")
+    if not value:
+        return 0
+    units = {
+        "Ki": 1 / 1024,
+        "Mi": 1,
+        "Gi": 1024,
+        "Ti": 1024 * 1024,
+        "K": 1000 / (1024 * 1024),
+        "M": 1000 * 1000 / (1024 * 1024),
+        "G": 1000 * 1000 * 1000 / (1024 * 1024),
+    }
+    for suffix, factor in units.items():
+        if value.endswith(suffix):
+            return int(float(value[:-len(suffix)]) * factor)
+    return int(float(value) / (1024 * 1024))
+
+for raw in lines:
+    if not raw.strip() or raw.lstrip().startswith("#"):
+        continue
+
+    indent = len(raw) - len(raw.lstrip(" "))
+    line = raw.strip()
+
+    m = re.match(r"([A-Za-z0-9_]+):\s*(.*)$", line)
+    if indent == 0 and m and m.group(1) in dbs:
+        section = m.group(1)
+        in_cluster = False
+        in_resources = False
+        in_requests = False
+        continue
+
+    if section is None:
+        continue
+
+    if indent <= 1:
+        in_cluster = False
+        in_resources = False
+        in_requests = False
+
+    if indent == 2 and line.startswith("enabled:"):
+        data[section]["enabled"] = line.split(":", 1)[1].strip().lower() == "true"
+        continue
+
+    if indent == 2 and line.startswith("cluster:"):
+        in_cluster = True
+        in_resources = False
+        in_requests = False
+        continue
+
+    if indent <= 2 and not line.startswith("cluster:"):
+        in_cluster = False
+        in_resources = False
+        in_requests = False
+
+    if not in_cluster:
+        continue
+
+    if indent == 4 and line.startswith("instances:"):
+        data[section]["instances"] = int(line.split(":", 1)[1].strip().strip('"').strip("'"))
+        continue
+
+    if indent == 4 and line.startswith("resources:"):
+        in_resources = True
+        in_requests = False
+        continue
+
+    if indent <= 4 and not line.startswith("resources:"):
+        in_resources = False
+        in_requests = False
+
+    if in_resources and indent == 6 and line.startswith("requests:"):
+        in_requests = True
+        continue
+
+    if in_resources and indent <= 6 and not line.startswith("requests:"):
+        in_requests = False
+
+    if in_requests and indent == 8 and line.startswith("cpu:"):
+        data[section]["cpu_m"] = cpu_to_millis(line.split(":", 1)[1])
+    if in_requests and indent == 8 and line.startswith("memory:"):
+        data[section]["mem_mib"] = mem_to_mib(line.split(":", 1)[1])
+
+total_cpu = 0
+total_mem = 0
+for db in dbs:
+    if data[db]["enabled"]:
+        total_cpu += data[db]["instances"] * data[db]["cpu_m"]
+        total_mem += data[db]["instances"] * data[db]["mem_mib"]
+
+print(f"{total_cpu}\t{total_mem}")
+PY
 }
 
 preflight() {
@@ -79,18 +260,34 @@ preflight() {
     kubectl version --client >/dev/null 2>&1 || die "kubectl is not working"
     kubectl get nodes >/dev/null 2>&1 || die "Cannot reach the Kubernetes API"
 
-    local WORKER_CPU REQUIRED_CPU PROFILE_LABEL
-    WORKER_CPU="$(schedulable_worker_cpu_millis)"
-    REQUIRED_CPU="$(required_profile_cpu_millis)"
-    PROFILE_LABEL="default"
-    [ -n "$VALUES_FILE" ] && PROFILE_LABEL="$VALUES_FILE"
+    local PROFILE_LABEL REQUIRED_CPU REQUIRED_MEM
+    local TOTAL_ALLOC_CPU TOTAL_ALLOC_MEM TOTAL_REQ_CPU TOTAL_REQ_MEM TOTAL_AVAIL_CPU TOTAL_AVAIL_MEM
+    local RESOURCES_LINE
+    PROFILE_LABEL="${VALUES_FILE:-$CHART_DIR/values.yaml}"
+    IFS=$'\t' read -r REQUIRED_CPU REQUIRED_MEM <<<"$(required_profile_resources)"
+    RESOURCES_LINE="$(schedulable_worker_report)" || die "Failed to inspect schedulable node resources"
 
     info "Selected values profile: $PROFILE_LABEL"
-    info "Schedulable worker CPU: ${WORKER_CPU}m"
-    info "Minimum database CPU required by profile: ${REQUIRED_CPU}m"
+    echo "    Schedulable untainted nodes:"
+    while IFS=$'\t' read -r NODE ALLOC_CPU ALLOC_MEM REQ_CPU REQ_MEM AVAIL_CPU AVAIL_MEM; do
+        [ -n "$NODE" ] || continue
+        if [ "$NODE" = "TOTAL" ]; then
+            TOTAL_ALLOC_CPU="$ALLOC_CPU"
+            TOTAL_ALLOC_MEM="$ALLOC_MEM"
+            TOTAL_REQ_CPU="$REQ_CPU"
+            TOTAL_REQ_MEM="$REQ_MEM"
+            TOTAL_AVAIL_CPU="$AVAIL_CPU"
+            TOTAL_AVAIL_MEM="$AVAIL_MEM"
+            continue
+        fi
+        echo "    - $NODE: alloc=${ALLOC_CPU}m/${ALLOC_MEM}Mi, current-used=${REQ_CPU}m/${REQ_MEM}Mi, available=${AVAIL_CPU}m/${AVAIL_MEM}Mi"
+    done <<< "$RESOURCES_LINE"
 
-    if [ "${WORKER_CPU:-0}" -lt "$REQUIRED_CPU" ]; then
-        die "Cluster is too small for this profile. Use VALUES_FILE=./db-cluster/values.small-cluster.yaml for this 3-worker cluster."
+    info "Schedulable node totals: alloc=${TOTAL_ALLOC_CPU}m/${TOTAL_ALLOC_MEM}Mi, current-used=${TOTAL_REQ_CPU}m/${TOTAL_REQ_MEM}Mi, available=${TOTAL_AVAIL_CPU}m/${TOTAL_AVAIL_MEM}Mi"
+    info "Project requested resources from values file: cpu=${REQUIRED_CPU}m memory=${REQUIRED_MEM}Mi"
+
+    if [ "${TOTAL_AVAIL_CPU:-0}" -lt "$REQUIRED_CPU" ] || [ "${TOTAL_AVAIL_MEM:-0}" -lt "$REQUIRED_MEM" ]; then
+        die "Cluster does not have enough available resources on schedulable untainted nodes for this profile."
     fi
 
     ok "Preflight checks passed"
@@ -1007,10 +1204,111 @@ teardown() {
 usage() {
     echo "Usage: ./setup.sh [command]"
     echo "Env:    VALUES_FILE=./db-cluster/values.small-cluster.yaml ./setup.sh"
-    echo "Commands: setup small_setup teardown status clusters vault_status upgrade sync"
-    echo "          preflight repos longhorn deps vault_transit vault_install vault_init"
-    echo "          install_operators deploy operator_plugins vault_list vault_get rotate"
-    echo "          pg mongo redis mysql cassandra vault_ui longhorn_ui"
+    echo ""
+    echo "1. setup"
+    echo "   Run the normal full install using db-cluster/values.yaml."
+    echo "   Why install it: this platform depends on ordered layers."
+    echo "   Storage must exist before PVC workloads, Vault must exist before secret sync,"
+    echo "   and operators must exist before database custom resources can reconcile."
+    echo ""
+    echo "2. small_setup"
+    echo "   Run the smaller safe profile using db-cluster/values.small-cluster.yaml."
+    echo "   Why install it: your cluster may not have enough worker CPU for the"
+    echo "   full profile. This reduced profile avoids pods staying Pending."
+    echo ""
+    echo "3. preflight"
+    echo "   Check whether cluster worker CPU is enough for the selected values file."
+    echo "   Why run it: it catches sizing problems before a long install fails."
+    echo ""
+    echo "4. repos"
+    echo "   Add or refresh Helm repositories."
+    echo "   Why install it: Helm charts are downloaded from these repos."
+    echo ""
+    echo "5. longhorn"
+    echo "   Install or repair Longhorn storage."
+    echo "   Why install it: the databases in this stack are stateful and need"
+    echo "   persistent volumes. Without storage, PVCs will not bind."
+    echo ""
+    echo "6. deps"
+    echo "   Refresh local chart dependencies."
+    echo "   Why install it: the umbrella chart uses packaged child charts that"
+    echo "   must be present locally before Helm can deploy them."
+    echo ""
+    echo "7. vault_transit"
+    echo "   Install transit Vault for auto-unseal."
+    echo "   Why install it: it acts as the unseal authority for the main Vault"
+    echo "   cluster so restarts do not require manual unseal every time."
+    echo ""
+    echo "8. vault_install"
+    echo "   Install the main Vault cluster."
+    echo "   Why install it: Vault is the source of truth for database passwords"
+    echo "   and secrets used by the rest of the platform."
+    echo ""
+    echo "9. vault_init"
+    echo "   Initialize Vault and create the token secret used later."
+    echo "   Why install it: an uninitialized Vault cannot serve secrets."
+    echo ""
+    echo "10. install_operators"
+    echo "    Install database operators."
+    echo "    Why install them: operators are the controllers that create and"
+    echo "    manage PostgreSQL, MongoDB, MySQL, Redis, and Cassandra clusters."
+    echo ""
+    echo "11. deploy"
+    echo "    Deploy the db-cluster chart and database resources."
+    echo "    Why install it: this is the step that creates the actual database"
+    echo "    custom resources, secrets wiring, ingress, and supporting objects."
+    echo ""
+    echo "12. operator_plugins"
+    echo "    Rerun the standalone operator installer script."
+    echo "    Why install it: useful when operators need repair or reinstall"
+    echo "    without rerunning the entire stack."
+    echo ""
+    echo "13. status"
+    echo "    Show pods and PVCs across the main namespaces."
+    echo "    Why use it: quick health check after install or during debugging."
+    echo ""
+    echo "14. clusters"
+    echo "    Show database custom resources."
+    echo "    Why use it: operators report database state through CRs, not only pods."
+    echo ""
+    echo "15. vault_status"
+    echo "    Check seal and health status of Vault."
+    echo "    Why use it: if Vault is sealed or unhealthy, secret sync and auth"
+    echo "    problems will appear across the platform."
+    echo ""
+    echo "16. upgrade"
+    echo "    Reapply the Helm release after values or password changes."
+    echo "    Why use it: update the running release without tearing it down."
+    echo ""
+    echo "17. sync"
+    echo "    Force External Secrets sync from Vault."
+    echo "    Why use it: push updated Vault values back into Kubernetes secrets."
+    echo ""
+    echo "18. vault_list"
+    echo "    List database secret paths in Vault."
+    echo "    Why use it: confirm secret paths were created as expected."
+    echo ""
+    echo "19. vault_get <db>"
+    echo "    Read one database secret from Vault."
+    echo "    Why use it: debug credential mismatches for a specific database."
+    echo ""
+    echo "20. rotate <db> <pass>"
+    echo "    Rotate one database password in Vault."
+    echo "    Why use it: Vault is the source of truth, so rotation should start there."
+    echo ""
+    echo "21. pg | mongo | redis | mysql | cassandra"
+    echo "    Port-forward one database locally."
+    echo "    Why use it: local access for admin work without exposing databases publicly."
+    echo ""
+    echo "22. vault_ui | longhorn_ui"
+    echo "    Port-forward Vault UI or Longhorn UI locally."
+    echo "    Why use it: inspect secret state or storage state safely from your machine."
+    echo ""
+    echo "23. teardown"
+    echo "    Delete the entire platform. Destructive."
+    echo "    Why use it: reset the cluster when you want a clean reinstall."
+    echo ""
+    echo "More detail: see HELP.md"
 }
 
 CMD="${1:-setup}"; shift 2>/dev/null || true

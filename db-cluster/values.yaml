@@ -135,9 +135,9 @@ vault:
 # POSTGRESQL — CloudNativePG Operator
 # =============================================================================
 postgresql:
-  enabled: true
+  enabled: false
   operator:
-    enabled: true
+    enabled: false
 
   cluster:
     instances: 3
@@ -197,9 +197,9 @@ postgresql:
 # MONGODB — Percona Operator for MongoDB
 # =============================================================================
 mongodb:
-  enabled: true
+  enabled: false
   operator:
-    enabled: true
+    enabled: false
 
   cluster:
     crVersion: "1.22.0"
@@ -228,9 +228,9 @@ mongodb:
 # MYSQL — Percona Operator for MySQL (PXC)
 # =============================================================================
 mysql:
-  enabled: true
+  enabled: false
   operator:
-    enabled: true
+    enabled: false
 
   cluster:
     instances: 3
