@@ -104,27 +104,27 @@ dependencies:
   - name: cloudnative-pg
     version: "0.21.0"
     repository: "https://cloudnative-pg.github.io/charts"
-    condition: postgresql.enabled
+    condition: postgresql.operator.enabled
 
   - name: psmdb-operator
     version: "1.15.0"
     repository: "https://percona.github.io/percona-helm-charts/"
-    condition: mongodb.enabled
+    condition: mongodb.operator.enabled
 
   - name: pxc-operator
     version: "1.14.0"
     repository: "https://percona.github.io/percona-helm-charts/"
-    condition: mysql.enabled
+    condition: mysql.operator.enabled
 
   - name: redis-operator
     version: "0.24.0"
     repository: "https://ot-container-kit.github.io/helm-charts/"
-    condition: redis.enabled
+    condition: redis.operator.enabled
 
   - name: k8ssandra-operator
     version: "1.14.0"
     repository: "https://helm.k8ssandra.io/stable"
-    condition: cassandra.enabled
+    condition: cassandra.operator.enabled
 
   # ── Local database subcharts (CRDs — deployed after operators are ready) ────
   - name: postgresql

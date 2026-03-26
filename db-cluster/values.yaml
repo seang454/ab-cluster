@@ -136,6 +136,8 @@ vault:
 # =============================================================================
 postgresql:
   enabled: true
+  operator:
+    enabled: true
 
   cluster:
     instances: 3
@@ -165,7 +167,7 @@ postgresql:
 
     resources:
       requests:
-        cpu: "500m"
+        cpu: "250m"
         memory: "512Mi"
       limits:
         cpu: "1500m"
@@ -196,13 +198,16 @@ postgresql:
 # =============================================================================
 mongodb:
   enabled: true
+  operator:
+    enabled: true
 
   cluster:
+    crVersion: "1.22.0"
     instances: 3
-    image: percona/percona-server-mongodb:7.0
+    image: percona/percona-server-mongodb:7.0.30-16
     resources:
       requests:
-        cpu: "500m"
+        cpu: "250m"
         memory: "1Gi"
       limits:
         cpu: "1500m"
@@ -224,6 +229,8 @@ mongodb:
 # =============================================================================
 mysql:
   enabled: false
+  operator:
+    enabled: false
 
   cluster:
     instances: 3
@@ -252,6 +259,8 @@ mysql:
 # =============================================================================
 redis:
   enabled: false
+  operator:
+    enabled: false
 
   cluster:
     instances: 3
@@ -277,6 +286,8 @@ redis:
 # =============================================================================
 cassandra:
   enabled: false
+  operator:
+    enabled: false
 
   cluster:
     instances: 3

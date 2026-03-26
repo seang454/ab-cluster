@@ -38,5 +38,5 @@ dependencies:
 - name: cassandra
   repository: file://charts/cassandra
   version: 1.0.0
-digest: sha256:4d150f8cf5cac640ade08bdf8e0d9d8890b676ac3b5bac703633293280dccb9c
-generated: "2026-03-22T16:26:11.680357014Z"
+digest: sha256:4daaadb43aae3f20b255aa161c86af8ca7435bca918e52e1a2dd35f306cca92c
+generated: "2026-03-26T07:26:37.645494887Z"

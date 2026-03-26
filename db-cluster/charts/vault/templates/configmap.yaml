@@ -75,7 +75,7 @@ data:
     # FIX 4: bound_service_account_names locked to ESO service account only
     echo "==> Writing role (locked to ESO service account)..."
     vault write auth/kubernetes/role/db-role \
-      bound_service_account_names="{{ printf "%s-external-secrets" .Release.Name }}" \
+      bound_service_account_names="{{ include "vault.serviceAccountName" . }}" \
       bound_service_account_namespaces="{{ .Release.Namespace }}" \
       policies="db-policy" \
       ttl="24h"

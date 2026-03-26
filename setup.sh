@@ -21,6 +21,7 @@ NAMESPACE="databases"
 VAULT_NS="vault"
 TRANSIT_NS="vault-transit"
 CHART_DIR="./db-cluster"
+LONGHORN_REPLICA_COUNT="${LONGHORN_REPLICA_COUNT:-1}"
 
 [ -f .env ] && { set -a; source .env; set +a; }
 
@@ -40,6 +41,29 @@ retry() {
         sleep "$WAIT"
     done
     return 1
+}
+
+wait_for_pods_ready() {
+    local NS="$1"; local SELECTOR="$2"; local MAX="$3"; local WAIT="$4"; local LABEL="$5"
+    local TOTAL READY
+    for i in $(seq 1 "$MAX"); do
+        TOTAL=$(kubectl get pods -n "$NS" -l "$SELECTOR" --no-headers 2>/dev/null \
+            | awk '$3 != "Completed" && $3 != "Succeeded" {c++} END {print c+0}')
+        READY=$(kubectl get pods -n "$NS" -l "$SELECTOR" --no-headers 2>/dev/null \
+            | awk '$3 != "Completed" && $3 != "Succeeded" {split($2,a,"/"); if (a[1] == a[2]) c++} END {print c+0}')
+        info "[$i/$MAX] ${LABEL}: ${READY:-0}/${TOTAL:-0} ready"
+        if [ "${TOTAL:-0}" -gt 0 ] && [ "${READY:-0}" -eq "${TOTAL:-0}" ]; then
+            return 0
+        fi
+        sleep "$WAIT"
+    done
+    kubectl get pods -n "$NS" -l "$SELECTOR" 2>/dev/null || true
+    return 1
+}
+
+select_vault_pod() {
+    kubectl get pods -n "$VAULT_NS" --no-headers 2>/dev/null \
+        | awk '$1 ~ /^vault-[0-2]$/ && $3 == "Running" {print $1; exit}'
 }
 
 # =============================================================================
@@ -150,6 +174,9 @@ spec:
           apt-get update -qq
           apt-get install -y open-iscsi
           systemctl enable --now iscsid || true
+          systemctl disable --now multipathd multipathd.socket || true
+          multipath -F || true
+          pkill -9 multipathd || true
         securityContext:
           privileged: true
       containers:
@@ -182,6 +209,7 @@ EOF
     # Install Longhorn
     info "Installing Longhorn v1.11.1..."
     helm upgrade --install longhorn longhorn/longhorn         --namespace longhorn-system         --create-namespace         --version 1.11.1 \
+        --set "persistence.defaultClassReplicaCount=${LONGHORN_REPLICA_COUNT}" \
         || die "Longhorn Helm install failed"
 
     info "Waiting for Longhorn to be fully ready (up to 10 min)..."
@@ -199,6 +227,8 @@ EOF
 
     [ "$READY" = "true" ] || die "Longhorn did not become ready — check: kubectl get pods -n longhorn-system"
     kubectl get storageclass longhorn 2>/dev/null | grep -q longhorn         || die "Longhorn storageclass not registered yet"
+    kubectl get storageclass longhorn -o jsonpath='{.parameters.numberOfReplicas}' 2>/dev/null | grep -qx "$LONGHORN_REPLICA_COUNT" \
+        || die "Longhorn storageclass replica count is not $LONGHORN_REPLICA_COUNT"
 
     ok "Longhorn ready"
     kubectl get pods -n longhorn-system | grep -v Completed
@@ -352,11 +382,14 @@ POLICY"
 
     [ -z "$TRANSIT_TOKEN" ] && die "Failed to create transit token"
 
-    # Store token secret in vault namespace
-    kubectl create secret generic vault-transit-token \
-        --namespace="$VAULT_NS" \
-        --from-literal=token="$TRANSIT_TOKEN" \
-        --dry-run=client -o yaml | kubectl apply -f -
+    # Store token secret where both the standalone Vault install and the chart hooks expect it.
+    for ns in "$VAULT_NS" "$NAMESPACE"; do
+        kubectl create namespace "$ns" 2>/dev/null || true
+        kubectl create secret generic vault-transit-token \
+            --namespace="$ns" \
+            --from-literal=token="$TRANSIT_TOKEN" \
+            --dry-run=client -o yaml | kubectl apply -f -
+    done
 
     kubectl get secret vault-transit-token -n "$VAULT_NS" >/dev/null 2>&1 \
         || die "vault-transit-token secret not created"
@@ -436,25 +469,29 @@ vault_install() {
 vault_init() {
     log "[6/8] Initializing Main Vault..."
 
-    info "Waiting for vault-0 API..."
+    VAULT_INIT_POD=""
+    info "Waiting for a Vault pod API..."
     for i in $(seq 1 40); do
-        STATUS=$(kubectl exec -n "$VAULT_NS" vault-0 \
+        VAULT_INIT_POD="$(select_vault_pod)"
+        STATUS=$(kubectl exec -n "$VAULT_NS" "$VAULT_INIT_POD" \
             -- vault status 2>/dev/null || echo "")
-        echo "$STATUS" | grep -q "Initialized" && { ok "API ready"; break; }
+        echo "$STATUS" | grep -q "Initialized" && { ok "API ready on $VAULT_INIT_POD"; break; }
         info "[$i/40] not ready, waiting 5s..."
         sleep 5
         [ "$i" = "40" ] && {
-            kubectl logs vault-0 -n "$VAULT_NS" --tail=20 2>/dev/null || true
+            [ -n "$VAULT_INIT_POD" ] && kubectl logs "$VAULT_INIT_POD" -n "$VAULT_NS" --tail=20 2>/dev/null || true
             die "Vault API never became ready"
         }
     done
 
-    INITIALIZED=$(kubectl exec -n "$VAULT_NS" vault-0 \
+    [ -n "$VAULT_INIT_POD" ] || die "No running Vault pod found for initialization"
+
+    INITIALIZED=$(kubectl exec -n "$VAULT_NS" "$VAULT_INIT_POD" \
         -- vault status 2>/dev/null | grep "^Initialized" | awk '{print $2}' || echo "false")
 
     if [ "$INITIALIZED" = "true" ]; then
         ok "Vault already initialized"
-        SEALED=$(kubectl exec -n "$VAULT_NS" vault-0 \
+        SEALED=$(kubectl exec -n "$VAULT_NS" "$VAULT_INIT_POD" \
             -- vault status 2>/dev/null | grep "^Sealed" | awk '{print $2}' || echo "true")
         [ "$SEALED" = "false" ] && { ok "Already unsealed"; return 0; }
         info "Sealed — transit should auto-unseal within 30s..."
@@ -465,7 +502,7 @@ vault_init() {
     info "Initializing with transit seal (recovery keys)..."
     # NOTE: With transit auto-unseal, use -recovery-shares / -recovery-threshold
     # NOT -key-shares / -key-threshold (those are for Shamir seal only and cause a 400 error)
-    kubectl exec -n "$VAULT_NS" vault-0 \
+    kubectl exec -n "$VAULT_NS" "$VAULT_INIT_POD" \
         -- vault operator init \
             -recovery-shares=5 \
             -recovery-threshold=3 \
@@ -499,6 +536,14 @@ vault_init() {
         --namespace "$NAMESPACE" \
         --dry-run=client -o yaml | kubectl apply -f -
 
+    kubectl create secret generic "${RELEASE}-vault-root-token" \
+        --from-literal=token="$ROOT_TOKEN" \
+        --namespace "$NAMESPACE" \
+        --dry-run=client -o yaml | kubectl apply -f -
+
+    wait_for_pods_ready "$VAULT_NS" "app.kubernetes.io/name=vault,component=server" 30 10 "Vault pods" \
+        || die "Vault pods did not become Ready"
+
     ok "Vault initialized and auto-unsealed via Transit"
 }
 
@@ -512,6 +557,13 @@ install_operators() {
     helm upgrade --install external-secrets ext-secrets/external-secrets \
         --namespace external-secrets --create-namespace \
         --set installCRDs=true --wait --timeout 5m
+
+    for crd in externalsecrets.external-secrets.io \
+               secretstores.external-secrets.io \
+               clustersecretstores.external-secrets.io; do
+        kubectl wait --for=condition=Established "crd/$crd" --timeout=120s >/dev/null 2>&1 \
+            || die "CRD $crd was not established"
+    done
     ok "ESO ready"
 
     info "CloudNativePG (PostgreSQL operator)..."
@@ -541,8 +593,21 @@ deploy() {
     : "${REDIS_PASS:?Add REDIS_PASS to .env}"
     : "${CASS_PASS:?Add CASS_PASS to .env}"
 
+    # Clean up any ad-hoc RBAC from previous recovery attempts so Helm can own it.
+    kubectl delete role my-db-vault-auth-secret-reader -n "$NAMESPACE" --ignore-not-found 2>/dev/null || true
+    kubectl delete rolebinding my-db-vault-auth-secret-reader -n "$NAMESPACE" --ignore-not-found 2>/dev/null || true
+
     helm upgrade --install "$RELEASE" "$CHART_DIR" \
         --namespace "$NAMESPACE" --create-namespace \
+        --set "certManager.enabled=false" \
+        --set "externalSecrets.enabled=false" \
+        --set "longhorn.enabled=false" \
+        --set "postgresql.operator.enabled=false" \
+        --set "mongodb.operator.enabled=false" \
+        --set "mysql.operator.enabled=false" \
+        --set "redis.operator.enabled=false" \
+        --set "cassandra.operator.enabled=false" \
+        --set "vaultTransit.enabled=false" \
         --set "vault.postgresql.superuserPassword=$PG_PASS" \
         --set "vault.postgresql.appPassword=$PG_PASS" \
         --set "vault.mongodb.clusterAdminPassword=$MONGO_PASS" \
@@ -555,7 +620,29 @@ deploy() {
         --set "vault.mysql.clusterCheckPassword=$MYSQL_PASS" \
         --set "vault.redis.password=$REDIS_PASS" \
         --set "vault.cassandra.password=$CASS_PASS" \
-        --timeout 10m
+        --timeout 10m \
+        || die "db-cluster chart deploy failed"
+
+    kubectl wait --for=condition=Ready clustersecretstore/vault-backend --timeout=180s >/dev/null 2>&1 \
+        || die "Vault ClusterSecretStore did not become Ready"
+    kubectl wait --for=condition=Ready externalsecret/"$RELEASE"-postgresql-credentials -n "$NAMESPACE" --timeout=180s >/dev/null 2>&1 \
+        || die "PostgreSQL superuser ExternalSecret did not become Ready"
+    kubectl wait --for=condition=Ready externalsecret/"$RELEASE"-postgresql-app -n "$NAMESPACE" --timeout=180s >/dev/null 2>&1 \
+        || die "PostgreSQL app ExternalSecret did not become Ready"
+    kubectl wait --for=condition=Ready externalsecret/"$RELEASE"-mongodb-credentials -n "$NAMESPACE" --timeout=180s >/dev/null 2>&1 \
+        || die "MongoDB ExternalSecret did not become Ready"
+
+    retry 18 10 kubectl get secret "$RELEASE-postgresql-credentials" -n "$NAMESPACE" >/dev/null \
+        || die "PostgreSQL superuser secret was not created"
+    retry 18 10 kubectl get secret "$RELEASE-postgresql-app" -n "$NAMESPACE" >/dev/null \
+        || die "PostgreSQL app secret was not created"
+    retry 18 10 kubectl get secret "$RELEASE-mongodb-credentials" -n "$NAMESPACE" >/dev/null \
+        || die "MongoDB credentials secret was not created"
+
+    wait_for_pods_ready "$NAMESPACE" "cnpg.io/cluster=${RELEASE}-postgresql" 60 10 "PostgreSQL pods" \
+        || die "PostgreSQL did not become Ready"
+    wait_for_pods_ready "$NAMESPACE" "app.kubernetes.io/instance=${RELEASE}-mongodb,app.kubernetes.io/component=mongod" 60 10 "MongoDB pods" \
+        || die "MongoDB did not become Ready"
 
     ok "Chart deployed"
     kubectl get pods -n "$NAMESPACE"
@@ -646,7 +733,9 @@ vault_list() {
     TOKEN=$(kubectl get secret vault-root-token -n "$NAMESPACE" \
         -o jsonpath='{.data.token}' 2>/dev/null | base64 -d)
     [ -z "$TOKEN" ] && die "vault-root-token not found"
-    kubectl exec -n "$VAULT_NS" vault-0 -- env VAULT_TOKEN="$TOKEN" vault kv list databases/
+    VAULT_POD="$(select_vault_pod)"
+    [ -n "$VAULT_POD" ] || die "No running Vault pod found"
+    kubectl exec -n "$VAULT_NS" "$VAULT_POD" -- env VAULT_TOKEN="$TOKEN" vault kv list databases/
 }
 
 vault_get() {
@@ -654,7 +743,9 @@ vault_get() {
     TOKEN=$(kubectl get secret vault-root-token -n "$NAMESPACE" \
         -o jsonpath='{.data.token}' 2>/dev/null | base64 -d)
     [ -z "$TOKEN" ] && die "vault-root-token not found"
-    kubectl exec -n "$VAULT_NS" vault-0 -- env VAULT_TOKEN="$TOKEN" vault kv get "databases/$DB"
+    VAULT_POD="$(select_vault_pod)"
+    [ -n "$VAULT_POD" ] || die "No running Vault pod found"
+    kubectl exec -n "$VAULT_NS" "$VAULT_POD" -- env VAULT_TOKEN="$TOKEN" vault kv get "databases/$DB"
 }
 
 rotate() {
@@ -663,7 +754,9 @@ rotate() {
     TOKEN=$(kubectl get secret vault-root-token -n "$NAMESPACE" \
         -o jsonpath='{.data.token}' 2>/dev/null | base64 -d)
     [ -z "$TOKEN" ] && die "vault-root-token not found"
-    kubectl exec -n "$VAULT_NS" vault-0 -- env VAULT_TOKEN="$TOKEN" \
+    VAULT_POD="$(select_vault_pod)"
+    [ -n "$VAULT_POD" ] || die "No running Vault pod found"
+    kubectl exec -n "$VAULT_NS" "$VAULT_POD" -- env VAULT_TOKEN="$TOKEN" \
         vault kv patch "databases/$DB" \
         superuser-password="$PASS" app-password="$PASS"
     kubectl annotate externalsecret "$DB-secret" \

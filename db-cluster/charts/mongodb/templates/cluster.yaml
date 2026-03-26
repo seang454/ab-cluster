@@ -4,7 +4,7 @@ metadata:
   name: {{ include "mongodb.fullname" . }}
   namespace: {{ .Release.Namespace }}
 spec:
-  crVersion: 1.15.0
+  crVersion: {{ .Values.cluster.crVersion | quote }}
   image: {{ .Values.cluster.image }}
 
   # Secret created automatically by ExternalSecret (ESO) from Vault

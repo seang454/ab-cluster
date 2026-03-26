@@ -44,11 +44,10 @@ server:
           }
         }
 
-        # FIX: Use HCL env interpolation with BACKTICKS (not quotes, not $VAR)
-        # This reads VAULT_TRANSIT_TOKEN env var injected by extraSecretEnvironmentVars below
+        # For transit seal, Vault reads the token from VAULT_TOKEN.
+        # Keep the token out of the HCL config and inject it via the secret below.
         seal "transit" {
           address    = "http://vault-transit.vault-transit.svc.cluster.local:8200"
-          token      = "${ env `VAULT_TRANSIT_TOKEN` }"
           mount_path = "transit"
           key_name   = "unseal-key"
         }
@@ -57,10 +56,10 @@ server:
 
         disable_mlock = true
 
-  # Reads vault-transit-token K8s secret → injects as VAULT_TRANSIT_TOKEN env var
-  # This is what the HCL seal block above reads at runtime
+  # Reads vault-transit-token K8s secret → injects as VAULT_TOKEN
+  # Transit seal uses VAULT_TOKEN automatically.
   extraSecretEnvironmentVars:
-  - envName: VAULT_TRANSIT_TOKEN
+  - envName: VAULT_TOKEN
     secretName: vault-transit-token
     secretKey: token
     optional: false
