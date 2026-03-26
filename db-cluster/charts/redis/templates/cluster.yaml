@@ -1,0 +1,61 @@
+apiVersion: redis.redis.opstreelabs.in/v1beta2
+kind: RedisCluster
+metadata:
+  name: {{ include "redis.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  clusterSize: {{ .Values.cluster.instances }}
+  clusterVersion: v7
+  persistenceEnabled: true
+
+  redisLeader:
+    affinity:
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            topologyKey: kubernetes.io/hostname
+            labelSelector:
+              matchLabels:
+                app: {{ include "redis.fullname" . }}
+
+  redisFollower:
+    affinity:
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            topologyKey: kubernetes.io/hostname
+            labelSelector:
+              matchLabels:
+                app: {{ include "redis.fullname" . }}
+
+  kubernetesConfig:
+    image: {{ .Values.cluster.image }}
+    imagePullPolicy: IfNotPresent
+    resources:
+      requests:
+        cpu: {{ .Values.cluster.resources.requests.cpu }}
+        memory: {{ .Values.cluster.resources.requests.memory }}
+      limits:
+        cpu: {{ .Values.cluster.resources.limits.cpu }}
+        memory: {{ .Values.cluster.resources.limits.memory }}
+    # Secret created automatically by ExternalSecret (ESO) from Vault
+    redisSecret:
+      name: {{ include "redis.secretName" . }}
+      key: password
+
+  storage:
+    volumeClaimTemplate:
+      spec:
+        storageClassName: {{ .Values.storage.storageClass }}
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ .Values.storage.size }}
+
+  {{- if .Values.exporter.enabled }}
+  redisExporter:
+    enabled: true
+    image: {{ .Values.exporter.image }}
+  {{- end }}

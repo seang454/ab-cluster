@@ -1,0 +1,57 @@
+apiVersion: pxc.percona.com/v1
+kind: PerconaXtraDBCluster
+metadata:
+  name: {{ include "mysql.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  crVersion: 1.14.0
+
+  # Secret created automatically by ExternalSecret (ESO) from Vault
+  secretsName: {{ include "mysql.secretName" . }}
+
+  pxc:
+    size: {{ .Values.cluster.instances }}
+    image: {{ .Values.cluster.image }}
+
+    affinity:
+      antiAffinityTopologyKey: kubernetes.io/hostname
+
+    podDisruptionBudget:
+      maxUnavailable: 1
+
+    resources:
+      requests:
+        cpu: {{ .Values.cluster.resources.requests.cpu }}
+        memory: {{ .Values.cluster.resources.requests.memory }}
+      limits:
+        cpu: {{ .Values.cluster.resources.limits.cpu }}
+        memory: {{ .Values.cluster.resources.limits.memory }}
+
+    volumeSpec:
+      persistentVolumeClaim:
+        storageClassName: {{ .Values.storage.storageClass }}
+        resources:
+          requests:
+            storage: {{ .Values.storage.size }}
+
+  haproxy:
+    enabled: true
+    size: 3
+    image: percona/percona-xtradb-cluster-operator:1.14.0-haproxy
+
+  {{- if .Values.backup.enabled }}
+  backup:
+    image: percona/percona-xtradb-cluster-operator:1.14.0-pxc8.0-backup
+    storages:
+      s3-storage:
+        type: s3
+        s3:
+          bucket: {{ .Values.backup.s3.bucket }}
+          region: {{ .Values.backup.s3.region }}
+          credentialsSecret: {{ .Values.backup.s3.credentialSecret }}
+    schedule:
+    - name: daily-backup
+      schedule: "0 2 * * *"
+      keep: 7
+      storageName: s3-storage
+  {{- end }}

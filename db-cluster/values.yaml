@@ -1,0 +1,305 @@
+# =============================================================================
+# db-cluster v4 — Operator-based Umbrella Chart Values
+# Hybrid secret approach: Vault (source of truth) + ESO (syncs to K8s Secrets)
+# =============================================================================
+
+# =============================================================================
+# CERT-MANAGER ClusterIssuer
+# =============================================================================
+certManager:
+  enabled: true
+  email: pengseangsim210@gmail.com
+  clusterIssuer:
+    name: letsencrypt-prod
+    server: https://acme-v02.api.letsencrypt.org/directory
+    ingressClass: nginx
+
+# =============================================================================
+# LONGHORN UI Ingress
+# =============================================================================
+longhorn:
+  enabled: true
+  namespace: longhorn-system
+  ingress:
+    enabled: true
+    host: longhorn.seang.shop
+    ingressClassName: nginx
+    tls:
+      enabled: true
+      secretName: longhorn-tls
+      clusterIssuer: "letsencrypt-prod"
+
+# =============================================================================
+# EXTERNAL SECRETS OPERATOR
+# Syncs secrets from Vault into Kubernetes Secrets automatically.
+# Operators consume plain K8s Secrets — no code changes needed.
+# =============================================================================
+externalSecrets:
+  enabled: true
+  installCRDs: true
+
+# =============================================================================
+# VAULT TRANSIT — single-node Vault, auto-unseals the main Vault HA cluster
+# No cloud KMS required — completely self-contained inside your cluster
+# Deploys to its own namespace: vault-transit
+# =============================================================================
+vaultTransit:
+  enabled: true
+  namespace: vault-transit
+  storageClass: longhorn
+  storageSize: 2Gi
+
+# =============================================================================
+# VAULT — Source of truth for all secrets
+# =============================================================================
+#
+# Transit unseal is enabled by default — no cloud KMS required.
+# vault-transit subchart runs first and creates the vault-transit-token secret
+# automatically. Main Vault reads it via secretKeyRef.
+#
+# DO NOT put real passwords here — pass via --set at deploy time:
+#
+#   export PG_PASS="YourRealPass"
+#   export MONGO_PASS="YourRealPass"
+#   export MYSQL_PASS="YourRealPass"
+#   export REDIS_PASS="YourRealPass"
+#   export CASS_PASS="YourRealPass"
+#
+#   helm install my-db ./db-cluster/ -n databases --create-namespace \
+#     --set "vault.postgresql.superuserPassword=$PG_PASS" \
+#     --set "vault.postgresql.appPassword=$PG_PASS" \
+#     --set "vault.mongodb.clusterAdminPassword=$MONGO_PASS" \
+#     --set "vault.mongodb.userAdminPassword=$MONGO_PASS" \
+#     --set "vault.mongodb.replicationKey=$MONGO_PASS" \
+#     --set "vault.mysql.rootPassword=$MYSQL_PASS" \
+#     --set "vault.mysql.appPassword=$MYSQL_PASS" \
+#     --set "vault.mysql.replicationPassword=$MYSQL_PASS" \
+#     --set "vault.mysql.monitorPassword=$MYSQL_PASS" \
+#     --set "vault.mysql.clusterCheckPassword=$MYSQL_PASS" \
+#     --set "vault.redis.password=$REDIS_PASS" \
+#     --set "vault.cassandra.password=$CASS_PASS"
+# =============================================================================
+vault:
+  enabled: true
+  # HTTP for internal cluster communication (transit vault is also HTTP)
+  address: "http://vault.vault.svc.cluster.local:8200"
+  role: "db-role"
+
+  autoUnseal:
+    awskms:
+      enabled: false
+      region: "ap-southeast-1"
+      kmsKeyId: "YOUR_KMS_KEY_ID"
+    gcpckms:
+      enabled: false
+      project: "your-gcp-project"
+      region: "global"
+      keyRing: "vault-keyring"
+      cryptoKey: "vault-key"
+      credentials: "/vault/userconfig/gcp-credentials/credentials.json"
+    azurekeyvault:
+      enabled: false
+      tenantId: "your-tenant-id"
+      vaultName: "your-keyvault-name"
+      keyName: "vault-unseal-key"
+    transit:
+      enabled: true
+      address: "http://vault-transit.vault-transit.svc.cluster.local:8200"
+      tokenSecretName: "vault-transit-token"
+      tokenSecretKey: "token"
+      mountPath: "transit"
+      key: "unseal-key"
+
+  # All passwords EMPTY — pass via --set from env vars at deploy time (see above)
+  postgresql:
+    superuserPassword: ""
+    appPassword: ""
+  mongodb:
+    clusterAdminUser: "clusterAdmin"
+    clusterAdminPassword: ""
+    userAdminUser: "userAdmin"
+    userAdminPassword: ""
+    replicationKey: ""
+  mysql:
+    rootPassword: ""
+    appPassword: ""
+    replicationPassword: ""
+    monitorPassword: ""
+    clusterCheckPassword: ""
+  redis:
+    password: ""
+  cassandra:
+    password: ""
+
+# =============================================================================
+# POSTGRESQL — CloudNativePG Operator
+# =============================================================================
+postgresql:
+  enabled: true
+
+  cluster:
+    instances: 3
+    imageName: ghcr.io/cloudnative-pg/postgresql:16
+
+    postgresql:
+      max_connections: "100"
+      shared_buffers: "256MB"
+      effective_cache_size: "512MB"
+      maintenance_work_mem: "64MB"
+      checkpoint_completion_target: "0.9"
+      wal_buffers: "16MB"
+      default_statistics_target: "100"
+      random_page_cost: "1.1"
+      effective_io_concurrency: "200"
+      work_mem: "4MB"
+      wal_level: "logical"
+      log_connections: "off"
+      log_disconnections: "off"
+      log_duration: "off"
+      log_min_duration_statement: "1000"
+
+    bootstrap:
+      database: appdb
+      owner: appuser
+      encoding: UTF8
+
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "512Mi"
+      limits:
+        cpu: "1500m"
+        memory: "2Gi"
+
+    podAntiAffinityType: preferred
+    whenUnsatisfiable: DoNotSchedule
+    switchoverDelay: 60
+    failoverDelay: 0
+    monitoring:
+      enabled: false
+
+  storage:
+    size: 10Gi
+    storageClass: longhorn
+    wal:
+      enabled: true
+      size: 2Gi
+
+  backup:
+    enabled: false
+    destinationPath: "s3://your-bucket/postgresql"
+    credentialSecret: "gcs-credentials"
+    retentionPolicy: "7d"
+
+# =============================================================================
+# MONGODB — Percona Operator for MongoDB
+# =============================================================================
+mongodb:
+  enabled: true
+
+  cluster:
+    instances: 3
+    image: percona/percona-server-mongodb:7.0
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "1Gi"
+      limits:
+        cpu: "1500m"
+        memory: "3Gi"
+
+  storage:
+    size: 10Gi
+    storageClass: longhorn
+
+  backup:
+    enabled: false
+    s3:
+      bucket: your-bucket
+      region: us-east-1
+      credentialSecret: "aws-s3-secret"
+
+# =============================================================================
+# MYSQL — Percona Operator for MySQL (PXC)
+# =============================================================================
+mysql:
+  enabled: false
+
+  cluster:
+    instances: 3
+    image: percona/percona-xtradb-cluster:8.0
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "512Mi"
+      limits:
+        cpu: "1500m"
+        memory: "2Gi"
+
+  storage:
+    size: 10Gi
+    storageClass: longhorn
+
+  backup:
+    enabled: false
+    s3:
+      bucket: your-bucket
+      region: us-east-1
+      credentialSecret: "aws-s3-secret"
+
+# =============================================================================
+# REDIS — OpsTree Redis Operator
+# =============================================================================
+redis:
+  enabled: false
+
+  cluster:
+    instances: 3
+    image: redis:7.2-alpine
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "500m"
+        memory: "1Gi"
+
+  storage:
+    size: 5Gi
+    storageClass: longhorn
+
+  exporter:
+    enabled: false
+    image: quay.io/opstree/redis-exporter:v1.44.0
+
+# =============================================================================
+# CASSANDRA — K8ssandra Operator
+# =============================================================================
+cassandra:
+  enabled: false
+
+  cluster:
+    instances: 3
+    image: k8ssandra/cass-management-api:4.1.3
+    config:
+      clusterName: seang-cassandra
+      datacenter: dc1
+    resources:
+      requests:
+        cpu: "1"
+        memory: "2Gi"
+      limits:
+        cpu: "1500m"
+        memory: "3Gi"
+
+  storage:
+    size: 10Gi
+    storageClass: longhorn
+
+  backup:
+    enabled: false
+    medusaImage: k8ssandra/medusa:0.14.0
+    s3:
+      bucket: your-bucket
+      region: us-east-1
+      credentialSecret: "aws-s3-secret"

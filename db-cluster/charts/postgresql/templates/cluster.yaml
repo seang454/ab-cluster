@@ -1,0 +1,90 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ include "postgresql.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  instances: {{ .Values.cluster.instances }}
+  imageName: {{ .Values.cluster.imageName }}
+
+  # Secret created automatically by ExternalSecret (ESO) from Vault
+  superuserSecret:
+    name: {{ include "postgresql.secretName" . }}
+
+  postgresql:
+    parameters:
+      max_connections: {{ .Values.cluster.postgresql.max_connections | quote }}
+      shared_buffers: {{ .Values.cluster.postgresql.shared_buffers | quote }}
+      effective_cache_size: {{ .Values.cluster.postgresql.effective_cache_size | quote }}
+      maintenance_work_mem: {{ .Values.cluster.postgresql.maintenance_work_mem | quote }}
+      checkpoint_completion_target: {{ .Values.cluster.postgresql.checkpoint_completion_target | quote }}
+      wal_buffers: {{ .Values.cluster.postgresql.wal_buffers | quote }}
+      default_statistics_target: {{ .Values.cluster.postgresql.default_statistics_target | quote }}
+      random_page_cost: {{ .Values.cluster.postgresql.random_page_cost | quote }}
+      effective_io_concurrency: {{ .Values.cluster.postgresql.effective_io_concurrency | quote }}
+      work_mem: {{ .Values.cluster.postgresql.work_mem | quote }}
+      wal_level: {{ .Values.cluster.postgresql.wal_level | quote }}
+      log_connections: {{ .Values.cluster.postgresql.log_connections | quote }}
+      log_disconnections: {{ .Values.cluster.postgresql.log_disconnections | quote }}
+      log_duration: {{ .Values.cluster.postgresql.log_duration | quote }}
+      log_min_duration_statement: {{ .Values.cluster.postgresql.log_min_duration_statement | quote }}
+
+  bootstrap:
+    initdb:
+      database: {{ .Values.cluster.bootstrap.database }}
+      owner: {{ .Values.cluster.bootstrap.owner }}
+      secret:
+        name: {{ include "postgresql.secretName" . }}
+      encoding: {{ .Values.cluster.bootstrap.encoding }}
+      localeCType: C
+      localeCollate: C
+
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: kubernetes.io/hostname
+      whenUnsatisfiable: {{ .Values.cluster.whenUnsatisfiable }}
+      labelSelector:
+        matchLabels:
+          cnpg.io/cluster: {{ include "postgresql.fullname" . }}
+
+  affinity:
+    enablePodAntiAffinity: true
+    topologyKey: kubernetes.io/hostname
+    podAntiAffinityType: {{ .Values.cluster.podAntiAffinityType }}
+
+  storage:
+    storageClass: {{ include "postgresql.storageClass" . }}
+    size: {{ .Values.storage.size }}
+
+  {{- if .Values.storage.wal.enabled }}
+  walStorage:
+    storageClass: {{ include "postgresql.storageClass" . }}
+    size: {{ .Values.storage.wal.size }}
+  {{- end }}
+
+  resources:
+    requests:
+      cpu: {{ .Values.cluster.resources.requests.cpu }}
+      memory: {{ .Values.cluster.resources.requests.memory }}
+    limits:
+      cpu: {{ .Values.cluster.resources.limits.cpu | quote }}
+      memory: {{ .Values.cluster.resources.limits.memory }}
+
+  monitoring:
+    enablePodMonitor: {{ .Values.cluster.monitoring.enabled }}
+
+  switchoverDelay: {{ .Values.cluster.switchoverDelay }}
+  failoverDelay: {{ .Values.cluster.failoverDelay }}
+
+  {{- if .Values.backup.enabled }}
+  backup:
+    barmanObjectStore:
+      destinationPath: {{ .Values.backup.destinationPath | quote }}
+      googleCredentials:
+        applicationCredentials:
+          name: {{ .Values.backup.credentialSecret }}
+          key: credentials.json
+      wal:
+        compression: gzip
+    retentionPolicy: {{ .Values.backup.retentionPolicy | quote }}
+  {{- end }}

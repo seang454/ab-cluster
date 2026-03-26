@@ -1,0 +1,66 @@
+# =============================================================================
+# vault-values.yaml — Vault HA with Raft + Transit auto-unseal
+# =============================================================================
+# Transit auto-unseal works like this:
+#   1. vault-transit step runs FIRST → creates vault-transit-token secret
+#   2. Main Vault starts → reads that secret → auto-unseals on every restart
+#   3. You never need to manually unseal again after cluster restarts
+# =============================================================================
+
+injector:
+  enabled: false
+
+server:
+  dataStorage:
+    enabled: true
+    size: 10Gi
+    storageClass: longhorn
+
+  ha:
+    enabled: true
+    replicas: 3
+    raft:
+      enabled: true
+      setNodeId: true
+      config: |
+        ui = true
+
+        listener "tcp" {
+          tls_disable     = 1
+          address         = "[::]:8200"
+          cluster_address = "[::]:8201"
+        }
+
+        storage "raft" {
+          path = "/vault/data"
+          retry_join {
+            leader_api_addr = "http://vault-0.vault-internal:8200"
+          }
+          retry_join {
+            leader_api_addr = "http://vault-1.vault-internal:8200"
+          }
+          retry_join {
+            leader_api_addr = "http://vault-2.vault-internal:8200"
+          }
+        }
+
+        # FIX: Use HCL env interpolation with BACKTICKS (not quotes, not $VAR)
+        # This reads VAULT_TRANSIT_TOKEN env var injected by extraSecretEnvironmentVars below
+        seal "transit" {
+          address    = "http://vault-transit.vault-transit.svc.cluster.local:8200"
+          token      = "${ env `VAULT_TRANSIT_TOKEN` }"
+          mount_path = "transit"
+          key_name   = "unseal-key"
+        }
+
+        service_registration "kubernetes" {}
+
+        disable_mlock = true
+
+  # Reads vault-transit-token K8s secret → injects as VAULT_TRANSIT_TOKEN env var
+  # This is what the HCL seal block above reads at runtime
+  extraSecretEnvironmentVars:
+  - envName: VAULT_TRANSIT_TOKEN
+    secretName: vault-transit-token
+    secretKey: token
+    optional: false

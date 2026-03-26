@@ -1,0 +1,76 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "vault.fullname" . }}-setup
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: vault-setup
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "20"
+    "helm.sh/hook-delete-policy": hook-succeeded
+spec:
+  ttlSecondsAfterFinished: 120
+  template:
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ include "vault.serviceAccountName" . }}
+      # Wait for vault-transit-token secret to exist before starting
+      # This ensures transit vault setup-job (weight=10) has finished
+      initContainers:
+      {{- if .Values.autoUnseal.transit.enabled }}
+      - name: wait-transit-token
+        image: bitnami/kubectl:latest
+        command:
+        - /bin/sh
+        - -c
+        - |
+          echo "==> Waiting for vault-transit-token secret..."
+          until kubectl get secret {{ .Values.autoUnseal.transit.tokenSecretName }} \
+            -n {{ .Release.Namespace }} 2>/dev/null; do
+            echo "    not ready yet, retrying in 5s..."
+            sleep 5
+          done
+          echo "==> vault-transit-token secret found, proceeding."
+      {{- end }}
+      containers:
+      - name: vault-setup
+        image: hashicorp/vault:1.15
+        command:
+        - /bin/sh
+        - /scripts/setup.sh
+        env:
+        - name: VAULT_ADDR
+          value: {{ .Values.address }}
+        - name: VAULT_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "vault.fullname" . }}-root-token
+              key: token
+        {{- if .Values.autoUnseal.transit.enabled }}
+        - name: VAULT_TRANSIT_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: {{ .Values.autoUnseal.transit.tokenSecretName }}
+              key: {{ .Values.autoUnseal.transit.tokenSecretKey }}
+        {{- end }}
+        volumeMounts:
+        - name: policies
+          mountPath: /vault/policies
+        - name: scripts
+          mountPath: /scripts
+      volumes:
+      - name: policies
+        configMap:
+          name: {{ include "vault.fullname" . }}-policies
+          items:
+          - key: db-policy.hcl
+            path: db-policy.hcl
+      - name: scripts
+        configMap:
+          name: {{ include "vault.fullname" . }}-policies
+          items:
+          - key: setup.sh
+            path: setup.sh
+            mode: 0755

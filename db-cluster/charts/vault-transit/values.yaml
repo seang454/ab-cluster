@@ -1,0 +1,4 @@
+# Transit Vault — single node, acts as unseal authority for main Vault HA
+namespace: vault-transit
+storageClass: longhorn
+storageSize: 2Gi

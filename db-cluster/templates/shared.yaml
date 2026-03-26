@@ -1,0 +1,48 @@
+{{- if .Values.certManager.enabled }}
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: {{ .Values.certManager.clusterIssuer.name }}
+  namespace: cert-manager
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "0"
+spec:
+  acme:
+    server: {{ .Values.certManager.clusterIssuer.server }}
+    email: {{ .Values.certManager.email }}
+    privateKeySecretRef:
+      name: {{ .Values.certManager.clusterIssuer.name }}
+    solvers:
+    - http01:
+        ingress:
+          class: {{ .Values.certManager.clusterIssuer.ingressClass }}
+{{- end }}
+---
+{{- if and .Values.longhorn.enabled .Values.longhorn.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: longhorn-ingress
+  namespace: {{ .Values.longhorn.namespace }}
+  annotations:
+    cert-manager.io/cluster-issuer: {{ .Values.longhorn.ingress.tls.clusterIssuer }}
+    nginx.ingress.kubernetes.io/proxy-body-size: "10000m"
+spec:
+  ingressClassName: {{ .Values.longhorn.ingress.ingressClassName }}
+  tls:
+  - hosts:
+    - {{ .Values.longhorn.ingress.host }}
+    secretName: {{ .Values.longhorn.ingress.tls.secretName }}
+  rules:
+  - host: {{ .Values.longhorn.ingress.host }}
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: longhorn-frontend
+            port:
+              number: 80
+{{- end }}

@@ -1,0 +1,4 @@
+apiVersion: v2
+name: redis
+description: Redis HA cluster via OpsTree Redis Operator
+version: 1.0.0

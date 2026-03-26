@@ -1,0 +1,93 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "vault-transit.fullname" . }}-setup
+  namespace: {{ include "vault-transit.namespace" . }}
+  labels:
+    app.kubernetes.io/name: vault-transit
+    app.kubernetes.io/instance: {{ .Release.Name }}
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["create", "get", "update", "patch"]
+---
+# Permission to write vault-transit-token into the databases namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "vault-transit.fullname" . }}-setup-databases
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: vault-transit
+    app.kubernetes.io/instance: {{ .Release.Name }}
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["create", "get", "update", "patch"]
+---
+# FIX: Permission to write vault-transit-token into the vault namespace
+# (Vault HA pods read it via secretKeyRef for auto-unseal)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "vault-transit.fullname" . }}-setup-vault
+  namespace: vault
+  labels:
+    app.kubernetes.io/name: vault-transit
+    app.kubernetes.io/instance: {{ .Release.Name }}
+rules:
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["create", "get", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "vault-transit.fullname" . }}-setup
+  namespace: {{ include "vault-transit.namespace" . }}
+  labels:
+    app.kubernetes.io/name: vault-transit
+    app.kubernetes.io/instance: {{ .Release.Name }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "vault-transit.fullname" . }}-setup
+subjects:
+- kind: ServiceAccount
+  name: {{ include "vault-transit.serviceAccountName" . }}
+  namespace: {{ include "vault-transit.namespace" . }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "vault-transit.fullname" . }}-setup-databases
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: vault-transit
+    app.kubernetes.io/instance: {{ .Release.Name }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "vault-transit.fullname" . }}-setup-databases
+subjects:
+- kind: ServiceAccount
+  name: {{ include "vault-transit.serviceAccountName" . }}
+  namespace: {{ include "vault-transit.namespace" . }}
+---
+# FIX: Bind the vault namespace role to the transit setup service account
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "vault-transit.fullname" . }}-setup-vault
+  namespace: vault
+  labels:
+    app.kubernetes.io/name: vault-transit
+    app.kubernetes.io/instance: {{ .Release.Name }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "vault-transit.fullname" . }}-setup-vault
+subjects:
+- kind: ServiceAccount
+  name: {{ include "vault-transit.serviceAccountName" . }}
+  namespace: {{ include "vault-transit.namespace" . }}

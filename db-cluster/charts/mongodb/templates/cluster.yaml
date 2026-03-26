@@ -1,0 +1,56 @@
+apiVersion: psmdb.percona.com/v1
+kind: PerconaServerMongoDB
+metadata:
+  name: {{ include "mongodb.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  crVersion: 1.15.0
+  image: {{ .Values.cluster.image }}
+
+  # Secret created automatically by ExternalSecret (ESO) from Vault
+  secrets:
+    users: {{ include "mongodb.secretName" . }}
+
+  replsets:
+  - name: rs0
+    size: {{ .Values.cluster.instances }}
+
+    affinity:
+      antiAffinityTopologyKey: kubernetes.io/hostname
+
+    podDisruptionBudget:
+      maxUnavailable: 1
+
+    resources:
+      requests:
+        cpu: {{ .Values.cluster.resources.requests.cpu }}
+        memory: {{ .Values.cluster.resources.requests.memory }}
+      limits:
+        cpu: {{ .Values.cluster.resources.limits.cpu }}
+        memory: {{ .Values.cluster.resources.limits.memory }}
+
+    volumeSpec:
+      persistentVolumeClaim:
+        storageClassName: {{ .Values.storage.storageClass }}
+        resources:
+          requests:
+            storage: {{ .Values.storage.size }}
+
+  {{- if .Values.backup.enabled }}
+  backup:
+    enabled: true
+    image: percona/percona-backup-mongodb:2.3.0
+    storages:
+      s3-storage:
+        type: s3
+        s3:
+          bucket: {{ .Values.backup.s3.bucket }}
+          region: {{ .Values.backup.s3.region }}
+          credentialsSecret: {{ .Values.backup.s3.credentialSecret }}
+    tasks:
+    - name: daily-backup
+      enabled: true
+      schedule: "0 2 * * *"
+      storageName: s3-storage
+      compressionType: gzip
+  {{- end }}

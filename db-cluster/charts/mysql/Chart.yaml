@@ -1,0 +1,4 @@
+apiVersion: v2
+name: mysql
+description: MySQL HA cluster via Percona Operator for MySQL (PXC)
+version: 1.0.0

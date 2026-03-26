@@ -1,0 +1,74 @@
+# =============================================================================
+# vault subchart values
+# Defaults — overridden by parent chart vault.* section
+# =============================================================================
+
+# HTTP for internal cluster communication
+address: "http://vault.vault.svc.cluster.local:8200"
+role: "db-role"
+
+# =============================================================================
+# AUTO-UNSEAL — Transit (default, no cloud KMS required)
+# Only ONE option should have enabled: true at a time
+# =============================================================================
+autoUnseal:
+  # ── Option A: AWS KMS ─────────────────────────────────────────────────────
+  awskms:
+    enabled: false
+    region: "ap-southeast-1"
+    kmsKeyId: "your-kms-key-id"
+
+  # ── Option B: GCP Cloud KMS ───────────────────────────────────────────────
+  gcpckms:
+    enabled: false
+    project: "your-gcp-project"
+    region: "global"
+    keyRing: "vault-keyring"
+    cryptoKey: "vault-key"
+    credentials: "/vault/userconfig/gcp-credentials/credentials.json"
+
+  # ── Option C: Azure Key Vault ─────────────────────────────────────────────
+  azurekeyvault:
+    enabled: false
+    tenantId: "your-tenant-id"
+    vaultName: "your-keyvault-name"
+    keyName: "vault-unseal-key"
+
+  # ── Option D: Transit (DEFAULT — no cloud required) ───────────────────────
+  # Token is auto-created by the vault-transit setup-job and stored in the
+  # vault-transit-token K8s secret. Do not set this manually.
+  transit:
+    enabled: true
+    address: "http://vault-transit.vault-transit.svc.cluster.local:8200"
+    tokenSecretName: "vault-transit-token"
+    tokenSecretKey: "token"
+    mountPath: "transit"
+    key: "unseal-key"
+
+# =============================================================================
+# Passwords — empty placeholders, passed via --set at deploy time
+# NEVER fill these in and commit to git
+# =============================================================================
+postgresql:
+  superuserPassword: ""
+  appPassword: ""
+
+mongodb:
+  clusterAdminUser: "clusterAdmin"
+  clusterAdminPassword: ""
+  userAdminUser: "userAdmin"
+  userAdminPassword: ""
+  replicationKey: ""
+
+mysql:
+  rootPassword: ""
+  appPassword: ""
+  replicationPassword: ""
+  monitorPassword: ""
+  clusterCheckPassword: ""
+
+redis:
+  password: ""
+
+cassandra:
+  password: ""

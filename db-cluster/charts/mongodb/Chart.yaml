@@ -1,0 +1,4 @@
+apiVersion: v2
+name: mongodb
+description: MongoDB HA cluster via Percona Operator for MongoDB
+version: 1.0.0

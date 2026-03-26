@@ -1,0 +1,84 @@
+{{- if .Values.autoUnseal.awskms.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "vault.fullname" . }}-ha-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: vault-ha-config
+    app.kubernetes.io/instance: {{ .Release.Name }}
+data:
+  extraconfig-from-values.hcl: |
+    seal "awskms" {
+      region     = "{{ .Values.autoUnseal.awskms.region }}"
+      kms_key_id = "{{ .Values.autoUnseal.awskms.kmsKeyId }}"
+    }
+{{- else if .Values.autoUnseal.gcpckms.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "vault.fullname" . }}-ha-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: vault-ha-config
+    app.kubernetes.io/instance: {{ .Release.Name }}
+data:
+  extraconfig-from-values.hcl: |
+    seal "gcpckms" {
+      project     = "{{ .Values.autoUnseal.gcpckms.project }}"
+      region      = "{{ .Values.autoUnseal.gcpckms.region }}"
+      key_ring    = "{{ .Values.autoUnseal.gcpckms.keyRing }}"
+      crypto_key  = "{{ .Values.autoUnseal.gcpckms.cryptoKey }}"
+      credentials = "{{ .Values.autoUnseal.gcpckms.credentials }}"
+    }
+{{- else if .Values.autoUnseal.azurekeyvault.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "vault.fullname" . }}-ha-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: vault-ha-config
+    app.kubernetes.io/instance: {{ .Release.Name }}
+data:
+  extraconfig-from-values.hcl: |
+    seal "azurekeyvault" {
+      tenant_id  = "{{ .Values.autoUnseal.azurekeyvault.tenantId }}"
+      vault_name = "{{ .Values.autoUnseal.azurekeyvault.vaultName }}"
+      key_name   = "{{ .Values.autoUnseal.azurekeyvault.keyName }}"
+    }
+{{- else if .Values.autoUnseal.transit.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "vault.fullname" . }}-ha-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: vault-ha-config
+    app.kubernetes.io/instance: {{ .Release.Name }}
+data:
+  # Token is read at runtime from the vault-transit-token K8s Secret
+  # injected as VAULT_TOKEN env var in the Vault pod spec
+  extraconfig-from-values.hcl: |
+    seal "transit" {
+      address     = "{{ .Values.autoUnseal.transit.address }}"
+      token       = "${ env `VAULT_TRANSIT_TOKEN` }"
+      mount_path  = "{{ .Values.autoUnseal.transit.mountPath }}"
+      key_name    = "{{ .Values.autoUnseal.transit.key }}"
+    }
+{{- else }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "vault.fullname" . }}-ha-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: vault-ha-config
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  annotations:
+    vault.auto-unseal/status: "disabled — manual unseal required after every restart"
+data:
+  extraconfig-from-values.hcl: |
+    # No auto-unseal configured
+    # Set autoUnseal.transit.enabled=true in vault/values.yaml
+{{- end }}

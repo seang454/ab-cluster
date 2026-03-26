@@ -1,0 +1,6 @@
+apiVersion: v2
+name: vault-transit
+description: >
+  Transit Vault — single-node Vault that acts as the auto-unseal
+  authority for the main Vault HA cluster. No cloud KMS required.
+version: 1.0.0

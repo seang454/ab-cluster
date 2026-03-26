@@ -1,0 +1,83 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "vault.fullname" . }}-policies
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: vault-policies
+    app.kubernetes.io/instance: {{ .Release.Name }}
+data:
+  db-policy.hcl: |
+    path "databases/data/postgresql" {
+      capabilities = ["read", "list"]
+    }
+    path "databases/data/mongodb" {
+      capabilities = ["read", "list"]
+    }
+    path "databases/data/mysql" {
+      capabilities = ["read", "list"]
+    }
+    path "databases/data/redis" {
+      capabilities = ["read", "list"]
+    }
+    path "databases/data/cassandra" {
+      capabilities = ["read", "list"]
+    }
+    path "databases/metadata/*" {
+      capabilities = ["read", "list"]
+    }
+
+  # FIX 1: Template paths now correctly reference .Values.postgresql.*
+  # which is the vault subchart's own values — matching vault/values.yaml exactly.
+  # The parent chart overrides vault.secrets.* which Helm maps to .Values.postgresql.*
+  # inside this subchart context.
+  setup.sh: |
+    #!/bin/sh
+    set -e
+
+    echo "==> Enabling KV secrets engine..."
+    vault secrets enable -path=databases kv-v2 || echo "already enabled"
+
+    echo "==> Writing database secrets..."
+    vault kv put databases/postgresql \
+      superuser-password="{{ .Values.postgresql.superuserPassword }}" \
+      app-password="{{ .Values.postgresql.appPassword }}"
+
+    vault kv put databases/mongodb \
+      cluster-admin-user="{{ .Values.mongodb.clusterAdminUser }}" \
+      cluster-admin-password="{{ .Values.mongodb.clusterAdminPassword }}" \
+      user-admin-user="{{ .Values.mongodb.userAdminUser }}" \
+      user-admin-password="{{ .Values.mongodb.userAdminPassword }}" \
+      replication-key="{{ .Values.mongodb.replicationKey }}"
+
+    vault kv put databases/mysql \
+      root-password="{{ .Values.mysql.rootPassword }}" \
+      app-password="{{ .Values.mysql.appPassword }}" \
+      replication-password="{{ .Values.mysql.replicationPassword }}" \
+      monitor-password="{{ .Values.mysql.monitorPassword }}" \
+      cluster-check-password="{{ .Values.mysql.clusterCheckPassword }}"
+
+    vault kv put databases/redis \
+      password="{{ .Values.redis.password }}"
+
+    vault kv put databases/cassandra \
+      password="{{ .Values.cassandra.password }}"
+
+    echo "==> Enabling Kubernetes auth..."
+    vault auth enable kubernetes || echo "already enabled"
+
+    vault write auth/kubernetes/config \
+      kubernetes_host="https://kubernetes.default.svc.cluster.local:443"
+
+    echo "==> Writing policy..."
+    vault policy write db-policy /vault/policies/db-policy.hcl
+
+    # FIX 4: bound_service_account_names locked to ESO service account only
+    echo "==> Writing role (locked to ESO service account)..."
+    vault write auth/kubernetes/role/db-role \
+      bound_service_account_names="{{ printf "%s-external-secrets" .Release.Name }}" \
+      bound_service_account_namespaces="{{ .Release.Namespace }}" \
+      policies="db-policy" \
+      ttl="24h"
+
+    echo "==> Vault setup complete!"

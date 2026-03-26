@@ -1,0 +1,4 @@
+apiVersion: v2
+name: cassandra
+description: Cassandra HA cluster via K8ssandra Operator
+version: 1.0.0

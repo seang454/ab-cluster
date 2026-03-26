@@ -1,0 +1,42 @@
+dependencies:
+- name: external-secrets
+  repository: https://charts.external-secrets.io
+  version: 0.9.13
+- name: vault-transit
+  repository: file://charts/vault-transit
+  version: 1.0.0
+- name: vault
+  repository: file://charts/vault
+  version: 1.0.0
+- name: cloudnative-pg
+  repository: https://cloudnative-pg.github.io/charts
+  version: 0.21.0
+- name: psmdb-operator
+  repository: https://percona.github.io/percona-helm-charts/
+  version: 1.15.0
+- name: pxc-operator
+  repository: https://percona.github.io/percona-helm-charts/
+  version: 1.14.0
+- name: redis-operator
+  repository: https://ot-container-kit.github.io/helm-charts/
+  version: 0.24.0
+- name: k8ssandra-operator
+  repository: https://helm.k8ssandra.io/stable
+  version: 1.14.0
+- name: postgresql
+  repository: file://charts/postgresql
+  version: 1.0.0
+- name: mongodb
+  repository: file://charts/mongodb
+  version: 1.0.0
+- name: mysql
+  repository: file://charts/mysql
+  version: 1.0.0
+- name: redis
+  repository: file://charts/redis
+  version: 1.0.0
+- name: cassandra
+  repository: file://charts/cassandra
+  version: 1.0.0
+digest: sha256:4d150f8cf5cac640ade08bdf8e0d9d8890b676ac3b5bac703633293280dccb9c
+generated: "2026-03-22T16:26:11.680357014Z"

@@ -1,0 +1,150 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "vault-transit.fullname" . }}-setup
+  namespace: {{ include "vault-transit.namespace" . }}
+  labels:
+    app.kubernetes.io/name: vault-transit-setup
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  annotations:
+    "helm.sh/hook": post-install
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": hook-succeeded
+spec:
+  ttlSecondsAfterFinished: 180
+  template:
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ include "vault-transit.serviceAccountName" . }}
+      initContainers:
+      - name: copy-vault-cli
+        image: hashicorp/vault:1.15
+        command:
+        - /bin/sh
+        - -c
+        - |
+          cp /bin/vault /tools/vault
+          chmod 0755 /tools/vault
+        volumeMounts:
+        - name: tools
+          mountPath: /tools
+      containers:
+      - name: vault-transit-setup
+        image: bitnami/kubectl:latest
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          export VAULT_ADDR="http://{{ include "vault-transit.fullname" . }}.{{ include "vault-transit.namespace" . }}.svc.cluster.local:8200"
+          VAULT_BIN="/tools/vault"
+
+          echo "==> Waiting for transit Vault to be ready..."
+          while true; do
+            : > /tmp/status.json
+            if "$VAULT_BIN" status -format=json >/tmp/status.json 2>/dev/null || [ -s /tmp/status.json ]; then
+              break
+            fi
+            echo "    waiting..."
+            sleep 5
+          done
+
+          STATUS_JSON=$(tr -d '\n ' < /tmp/status.json)
+          INITIALIZED=$(printf '%s' "$STATUS_JSON" | sed -n 's/.*"initialized":\([^,}]*\).*/\1/p')
+
+          if [ "$INITIALIZED" = "false" ]; then
+            echo "==> Initializing transit Vault (3-of-5 key shares)..."
+            "$VAULT_BIN" operator init \
+              -key-shares=5 \
+              -key-threshold=3 \
+              -format=json > /tmp/init.json
+
+            INIT_JSON=$(tr -d '\n ' < /tmp/init.json)
+            UNSEAL_KEYS=$(printf '%s' "$INIT_JSON" | sed -n 's/.*"unseal_keys_b64":\[\([^]]*\)\].*/\1/p')
+            UNSEAL_KEY_1=$(printf '%s' "$UNSEAL_KEYS" | cut -d, -f1 | tr -d '"')
+            UNSEAL_KEY_2=$(printf '%s' "$UNSEAL_KEYS" | cut -d, -f2 | tr -d '"')
+            UNSEAL_KEY_3=$(printf '%s' "$UNSEAL_KEYS" | cut -d, -f3 | tr -d '"')
+            UNSEAL_KEY_4=$(printf '%s' "$UNSEAL_KEYS" | cut -d, -f4 | tr -d '"')
+            UNSEAL_KEY_5=$(printf '%s' "$UNSEAL_KEYS" | cut -d, -f5 | tr -d '"')
+            ROOT_TOKEN=$(printf '%s' "$INIT_JSON" | sed -n 's/.*"root_token":"\([^"]*\)".*/\1/p')
+
+            echo "==> Unsealing transit Vault (3 of 5 shards)..."
+            "$VAULT_BIN" operator unseal "$UNSEAL_KEY_1"
+            "$VAULT_BIN" operator unseal "$UNSEAL_KEY_2"
+            "$VAULT_BIN" operator unseal "$UNSEAL_KEY_3"
+
+            echo "==> Storing all 5 unseal keys as K8s Secret..."
+            kubectl create secret generic vault-transit-init \
+              --namespace={{ include "vault-transit.namespace" . }} \
+              --from-literal=unseal-key-1="$UNSEAL_KEY_1" \
+              --from-literal=unseal-key-2="$UNSEAL_KEY_2" \
+              --from-literal=unseal-key-3="$UNSEAL_KEY_3" \
+              --from-literal=unseal-key-4="$UNSEAL_KEY_4" \
+              --from-literal=unseal-key-5="$UNSEAL_KEY_5" \
+              --from-literal=root-token="$ROOT_TOKEN" \
+              --dry-run=client -o yaml | kubectl apply -f -
+
+            export VAULT_TOKEN="$ROOT_TOKEN"
+          else
+            echo "==> Transit Vault already initialized, reading root token..."
+            ROOT_TOKEN=$(kubectl get secret vault-transit-init \
+              --namespace={{ include "vault-transit.namespace" . }} \
+              -o jsonpath='{.data.root-token}' | base64 -d)
+            export VAULT_TOKEN="$ROOT_TOKEN"
+          fi
+
+          echo "==> Enabling transit secrets engine..."
+          "$VAULT_BIN" secrets enable transit || echo "already enabled"
+
+          echo "==> Creating unseal key for main Vault..."
+          "$VAULT_BIN" write -f transit/keys/unseal-key || echo "key already exists"
+
+          echo "==> Creating limited policy (encrypt/decrypt only)..."
+          "$VAULT_BIN" policy write vault-unseal-policy - <<POLICY
+          path "transit/encrypt/unseal-key" {
+            capabilities = ["update"]
+          }
+          path "transit/decrypt/unseal-key" {
+            capabilities = ["update"]
+          }
+          POLICY
+
+          echo "==> Creating non-expiring token for main Vault..."
+          # NOTE: -period=0 does NOT create a non-expiring token — it falls back
+          # to system default TTL, causing 403 "invalid token" on Vault restarts.
+          # Use -ttl=0 -explicit-max-ttl=0 for a truly non-expiring service token.
+          TRANSIT_TOKEN=$("$VAULT_BIN" token create \
+            -policy=vault-unseal-policy \
+            -ttl=0 \
+            -explicit-max-ttl=0 \
+            -orphan \
+            -format=json | tr -d '\n ' | sed -n 's/.*"client_token":"\([^"]*\)".*/\1/p')
+
+          # FIX: Write vault-transit-token to BOTH namespaces:
+          #   - {{ .Release.Namespace }} (databases) — for the vault setup-job initContainer
+          #   - vault                               — for the Vault HA pods (secretKeyRef in ha-config)
+          echo "==> Storing transit token in {{ .Release.Namespace }} namespace..."
+          kubectl create secret generic vault-transit-token \
+            --namespace={{ .Release.Namespace }} \
+            --from-literal=token="$TRANSIT_TOKEN" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          echo "==> Storing transit token in vault namespace (for Vault HA auto-unseal)..."
+          kubectl create secret generic vault-transit-token \
+            --namespace=vault \
+            --from-literal=token="$TRANSIT_TOKEN" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          echo "==> Revoking root token (security best practice)..."
+          "$VAULT_BIN" token revoke "$ROOT_TOKEN" || echo "warning: could not revoke root token"
+
+          echo "==> Transit Vault setup complete!"
+          echo "    Transit token stored in: vault-transit-token ({{ .Release.Namespace }} + vault namespaces)"
+          echo "    Unseal keys stored in:   vault-transit-init ({{ include "vault-transit.namespace" . }} namespace)"
+          echo "    IMPORTANT: Back up vault-transit-init secret outside the cluster"
+        volumeMounts:
+        - name: tools
+          mountPath: /tools
+      volumes:
+      - name: tools
+        emptyDir: {}
