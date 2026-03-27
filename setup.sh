@@ -253,6 +253,39 @@ print(f"{total_cpu}\t{total_mem}")
 PY
 }
 
+enabled_databases() {
+    local PROFILE_FILE
+    PROFILE_FILE="${VALUES_FILE:-$CHART_DIR/values.yaml}"
+    [ -f "$PROFILE_FILE" ] || die "Values file not found: $PROFILE_FILE"
+
+    python3 - "$PROFILE_FILE" <<'PY'
+import re
+import sys
+
+path = sys.argv[1]
+lines = open(path, "r", encoding="utf-8").read().splitlines()
+dbs = ["postgresql", "mongodb", "mysql", "redis", "cassandra"]
+section = None
+enabled = []
+
+for raw in lines:
+    if not raw.strip() or raw.lstrip().startswith("#"):
+        continue
+    indent = len(raw) - len(raw.lstrip(" "))
+    line = raw.strip()
+    m = re.match(r"([A-Za-z0-9_]+):\s*(.*)$", line)
+    if indent == 0 and m and m.group(1) in dbs:
+        section = m.group(1)
+        continue
+    if section and indent == 2 and line.startswith("enabled:"):
+        if line.split(":", 1)[1].strip().lower() == "true":
+            enabled.append(section)
+        section = None
+
+print(" ".join(enabled))
+PY
+}
+
 preflight() {
     log "[0/9] Running preflight checks..."
     command -v kubectl >/dev/null 2>&1 || die "kubectl not found"
@@ -881,24 +914,50 @@ deploy() {
 
     kubectl wait --for=condition=Ready clustersecretstore/vault-backend --timeout=180s >/dev/null 2>&1 \
         || die "Vault ClusterSecretStore did not become Ready"
-    kubectl wait --for=condition=Ready externalsecret/"$RELEASE"-postgresql-credentials -n "$NAMESPACE" --timeout=180s >/dev/null 2>&1 \
-        || die "PostgreSQL superuser ExternalSecret did not become Ready"
-    kubectl wait --for=condition=Ready externalsecret/"$RELEASE"-postgresql-app -n "$NAMESPACE" --timeout=180s >/dev/null 2>&1 \
-        || die "PostgreSQL app ExternalSecret did not become Ready"
-    kubectl wait --for=condition=Ready externalsecret/"$RELEASE"-mongodb-credentials -n "$NAMESPACE" --timeout=180s >/dev/null 2>&1 \
-        || die "MongoDB ExternalSecret did not become Ready"
-
-    retry 18 10 kubectl get secret "$RELEASE-postgresql-credentials" -n "$NAMESPACE" >/dev/null \
-        || die "PostgreSQL superuser secret was not created"
-    retry 18 10 kubectl get secret "$RELEASE-postgresql-app" -n "$NAMESPACE" >/dev/null \
-        || die "PostgreSQL app secret was not created"
-    retry 18 10 kubectl get secret "$RELEASE-mongodb-credentials" -n "$NAMESPACE" >/dev/null \
-        || die "MongoDB credentials secret was not created"
-
-    wait_for_pods_ready "$NAMESPACE" "cnpg.io/cluster=${RELEASE}-postgresql" 60 10 "PostgreSQL pods" \
-        || die "PostgreSQL did not become Ready"
-    wait_for_pods_ready "$NAMESPACE" "app.kubernetes.io/instance=${RELEASE}-mongodb,app.kubernetes.io/component=mongod" 60 10 "MongoDB pods" \
-        || die "MongoDB did not become Ready"
+    local ENABLED_DBS
+    ENABLED_DBS="$(enabled_databases)"
+    for db in $ENABLED_DBS; do
+        case "$db" in
+            postgresql)
+                kubectl wait --for=condition=Ready externalsecret/"$RELEASE"-postgresql-credentials -n "$NAMESPACE" --timeout=180s >/dev/null 2>&1 \
+                    || die "PostgreSQL superuser ExternalSecret did not become Ready"
+                kubectl wait --for=condition=Ready externalsecret/"$RELEASE"-postgresql-app -n "$NAMESPACE" --timeout=180s >/dev/null 2>&1 \
+                    || die "PostgreSQL app ExternalSecret did not become Ready"
+                retry 18 10 kubectl get secret "$RELEASE-postgresql-credentials" -n "$NAMESPACE" >/dev/null \
+                    || die "PostgreSQL superuser secret was not created"
+                retry 18 10 kubectl get secret "$RELEASE-postgresql-app" -n "$NAMESPACE" >/dev/null \
+                    || die "PostgreSQL app secret was not created"
+                wait_for_pods_ready "$NAMESPACE" "cnpg.io/cluster=${RELEASE}-postgresql" 60 10 "PostgreSQL pods" \
+                    || die "PostgreSQL did not become Ready"
+                ;;
+            mongodb)
+                kubectl wait --for=condition=Ready externalsecret/"$RELEASE"-mongodb-credentials -n "$NAMESPACE" --timeout=180s >/dev/null 2>&1 \
+                    || die "MongoDB ExternalSecret did not become Ready"
+                retry 18 10 kubectl get secret "$RELEASE-mongodb-credentials" -n "$NAMESPACE" >/dev/null \
+                    || die "MongoDB credentials secret was not created"
+                wait_for_pods_ready "$NAMESPACE" "app.kubernetes.io/instance=${RELEASE}-mongodb,app.kubernetes.io/component=mongod" 60 10 "MongoDB pods" \
+                    || die "MongoDB did not become Ready"
+                ;;
+            mysql)
+                kubectl wait --for=condition=Ready externalsecret/"$RELEASE"-mysql-credentials -n "$NAMESPACE" --timeout=180s >/dev/null 2>&1 \
+                    || die "MySQL ExternalSecret did not become Ready"
+                retry 18 10 kubectl get secret "$RELEASE-mysql-credentials" -n "$NAMESPACE" >/dev/null \
+                    || die "MySQL credentials secret was not created"
+                ;;
+            redis)
+                kubectl wait --for=condition=Ready externalsecret/"$RELEASE"-redis-credentials -n "$NAMESPACE" --timeout=180s >/dev/null 2>&1 \
+                    || die "Redis ExternalSecret did not become Ready"
+                retry 18 10 kubectl get secret "$RELEASE-redis-credentials" -n "$NAMESPACE" >/dev/null \
+                    || die "Redis credentials secret was not created"
+                ;;
+            cassandra)
+                kubectl wait --for=condition=Ready externalsecret/"$RELEASE"-cassandra-credentials -n "$NAMESPACE" --timeout=180s >/dev/null 2>&1 \
+                    || die "Cassandra ExternalSecret did not become Ready"
+                retry 18 10 kubectl get secret "$RELEASE-cassandra-credentials" -n "$NAMESPACE" >/dev/null \
+                    || die "Cassandra credentials secret was not created"
+                ;;
+        esac
+    done
 
     ok "Chart deployed"
     kubectl get pods -n "$NAMESPACE"
@@ -907,7 +966,7 @@ deploy() {
 operator_plugins() {
     [ -x "$OPERATOR_INSTALLER" ] || die "Operator installer not found or not executable: $OPERATOR_INSTALLER"
     log "[9/9] Running operator installer script..."
-    "$OPERATOR_INSTALLER" all || die "Operator installer script failed"
+    VALUES_FILE="${VALUES_FILE:-$CHART_DIR/values.yaml}" "$OPERATOR_INSTALLER" all || die "Operator installer script failed"
     ok "Operator installer script completed"
 }
 
@@ -928,8 +987,8 @@ setup() {
     vault_install   || die "Step vault_install failed"
     vault_init      || die "Step vault_init failed"
     install_operators || die "Step install_operators failed"
-    deploy          || die "Step deploy failed"
     operator_plugins || die "Step operator_plugins failed"
+    deploy          || die "Step deploy failed"
 
     echo ""
     echo "============================================="

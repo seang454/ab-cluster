@@ -3,6 +3,7 @@
 set -euo pipefail
 
 NAMESPACE="${NAMESPACE:-databases}"
+VALUES_FILE="${VALUES_FILE:-./db-cluster/values.yaml}"
 CNPG_NAMESPACE="${CNPG_NAMESPACE:-cnpg-system}"
 REDIS_NAMESPACE="${REDIS_NAMESPACE:-$NAMESPACE}"
 PXC_NAMESPACE="${PXC_NAMESPACE:-$NAMESPACE}"
@@ -39,6 +40,37 @@ die() {
 
 require_bin() {
   command -v "$1" >/dev/null 2>&1 || die "Missing required command: $1"
+}
+
+enabled_databases() {
+  [ -f "$VALUES_FILE" ] || die "Values file not found: $VALUES_FILE"
+
+  python3 - "$VALUES_FILE" <<'PY'
+import re
+import sys
+
+path = sys.argv[1]
+lines = open(path, "r", encoding="utf-8").read().splitlines()
+dbs = ["postgresql", "mongodb", "mysql", "redis", "cassandra"]
+section = None
+enabled = []
+
+for raw in lines:
+    if not raw.strip() or raw.lstrip().startswith("#"):
+        continue
+    indent = len(raw) - len(raw.lstrip(" "))
+    line = raw.strip()
+    m = re.match(r"([A-Za-z0-9_]+):\s*(.*)$", line)
+    if indent == 0 and m and m.group(1) in dbs:
+        section = m.group(1)
+        continue
+    if section and indent == 2 and line.startswith("enabled:"):
+        if line.split(":", 1)[1].strip().lower() == "true":
+            enabled.append(section)
+        section = None
+
+print(" ".join(enabled))
+PY
 }
 
 cleanup_pending_release() {
@@ -155,6 +187,7 @@ Examples:
   ./install-operators.sh all
   ./install-operators.sh cnpg
   NAMESPACE=databases ./install-operators.sh psmdb
+  VALUES_FILE=./db-cluster/values.small-cluster.yaml ./install-operators.sh all
 EOF
 }
 
@@ -169,12 +202,21 @@ main() {
       repos
       ;;
     all)
+      local enabled
       repos
-      install_cnpg
-      install_psmdb
-      install_pxc
-      install_redis_operator
-      install_k8ssandra
+      enabled="$(enabled_databases)"
+      info_file="${VALUES_FILE}"
+      log "Installing operators for enabled databases from $info_file"
+      [ -n "$enabled" ] || die "No databases are enabled in $VALUES_FILE"
+      for db in $enabled; do
+        case "$db" in
+          postgresql) install_cnpg ;;
+          mongodb) install_psmdb ;;
+          mysql) install_pxc ;;
+          redis) install_redis_operator ;;
+          cassandra) install_k8ssandra ;;
+        esac
+      done
       ;;
     cnpg)
       repos
