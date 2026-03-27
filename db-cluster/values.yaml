@@ -22,7 +22,7 @@ longhorn:
   namespace: longhorn-system
   ingress:
     enabled: true
-    host: longhorn.seang.shop
+    host: longhorn.a8s.seang.shop
     ingressClassName: nginx
     tls:
       enabled: true
@@ -297,11 +297,24 @@ cassandra:
       datacenter: dc1
     resources:
       requests:
-        cpu: "1"
-        memory: "2Gi"
+        cpu: "400m"
+        memory: "1536Mi"
       limits:
-        cpu: "1500m"
+        cpu: "1"
         memory: "3Gi"
+    configBuilderResources:
+      requests:
+        cpu: "250m"
+        memory: "192Mi"
+      limits:
+        cpu: "500m"
+        memory: "384Mi"
+    systemLoggerResources:
+      requests:
+        cpu: "50m"
+        memory: "64Mi"
+      limits:
+        memory: "128Mi"
 
   storage:
     size: 10Gi

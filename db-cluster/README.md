@@ -58,6 +58,7 @@ Kubernetes Cluster (3 nodes × 2CPU / 8GB / 50GB)
 - **Custom resource:** `kind: RedisCluster` (`redis.redis.opstreelabs.in/v1beta2`)
 - **HA mechanism:** Redis Cluster mode — data sharded across leader nodes
 - **Failover:** Automatic — followers promoted to leader on failure
+- **Default topology in this chart:** `cluster.instances: 3` creates 3 leader pods and 3 follower pods
 - **Monitoring:** Optional Redis Exporter sidecar for Prometheus
 
 ### Cassandra — K8ssandra Operator
@@ -67,6 +68,7 @@ Kubernetes Cluster (3 nodes × 2CPU / 8GB / 50GB)
 - **Failover:** No failover needed — ring continues without the failed node
 - **Backup:** Medusa backup → S3 (configure in values.yaml)
 - **Extra features:** Multi-datacenter support, Reaper for repairs
+- **Bootstrap note:** Cassandra pods can stay `Running` but not `Ready` (`1/2`) for several minutes while the ring forms and auth/system tables initialize
 
 ---
 
@@ -96,7 +98,14 @@ kubectl rollout status deployment/longhorn-driver-deployer -n longhorn-system
 
 ## Installation
 
-Operators install **automatically** when you deploy this chart. No manual operator installation needed.
+Operators can be installed automatically by the umbrella chart, but in this repo the supported workflow is:
+
+```bash
+./setup.sh install_operators
+./setup.sh deploy
+```
+
+If operators are already installed and healthy, `./setup.sh deploy` is usually enough.
 
 ### 1. Clone the chart
 ```bash
@@ -138,6 +147,10 @@ cassandra:
   enabled: false   # flip to true to install K8ssandra operator + Cassandra
 ```
 
+Important:
+- Setting `enabled: false` for a database that is already deployed and then rerunning `deploy` or `upgrade` will usually remove that database's Kubernetes objects from the cluster.
+- Treat `enabled: false` as an uninstall signal for that component, not a harmless toggle.
+
 ### 4. Download dependencies and deploy
 ```bash
 helm dependency update ./db-cluster/
@@ -165,6 +178,11 @@ kubectl get pxc -n databases               # MySQL
 kubectl get rediscluster -n databases      # Redis
 kubectl get k8ssandracluster -n databases  # Cassandra
 ```
+
+Readiness notes:
+- A pod like `k8ssandra-operator-crd-upgrader-job-...` showing `0/1 Completed` is healthy. It is a Job and `Completed` is its success state.
+- Cassandra pods may show `1/2 Running` during bootstrap. That means the sidecar is ready but the Cassandra process is still joining the ring.
+- Cassandra pods are spread across different nodes when possible; this chart uses anti-affinity to avoid placing all Cassandra pods on one host.
 
 ### What happens step by step
 
@@ -271,12 +289,13 @@ Your application needs retry logic to handle the brief failover window. Most dat
 |---|---|---|---|
 | PostgreSQL ×3 | 1.5 cores | 1.5Gi | 30Gi + 6Gi WAL |
 | MongoDB ×3 | 1.5 cores | 3Gi | 30Gi |
-| Redis ×3 | 0.3 cores | 0.4Gi | 15Gi |
+| Redis ×3 leaders + ×3 followers | 0.6 cores | 0.8Gi | 30Gi |
 | MySQL ×3 | 1.5 cores | 1.5Gi | 30Gi |
-| Cassandra ×3 | 3 cores | 6Gi | 30Gi |
+| Cassandra ×3 | about 1.35 cores steady-state, higher during bootstrap | about 4.8Gi | 30Gi |
 
 **Recommended enabled combination on 3 small nodes:**
 - PostgreSQL + MongoDB + Redis (fits comfortably)
+- PostgreSQL + MongoDB + Redis + Cassandra is usually too much for 3 small workers unless Cassandra requests are reduced
 - Do NOT enable all 5 at once — insufficient RAM
 
 ---

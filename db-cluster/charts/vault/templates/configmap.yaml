@@ -61,6 +61,7 @@ data:
       password="{{ .Values.redis.password }}"
 
     vault kv put databases/cassandra \
+      username="{{ .Values.cassandra.username }}" \
       password="{{ .Values.cassandra.password }}"
 
     echo "==> Enabling Kubernetes auth..."

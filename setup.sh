@@ -253,6 +253,171 @@ print(f"{total_cpu}\t{total_mem}")
 PY
 }
 
+profile_schedulability_report() {
+    local PROFILE_FILE
+    PROFILE_FILE="${VALUES_FILE:-$CHART_DIR/values.yaml}"
+    [ -f "$PROFILE_FILE" ] || die "Values file not found: $PROFILE_FILE"
+
+    kubectl get nodes -o json > /tmp/setup_nodes_sched.json 2>/dev/null || return 1
+    kubectl get pods -A -o json > /tmp/setup_pods_sched.json 2>/dev/null || return 1
+
+    python3 - "$PROFILE_FILE" /tmp/setup_nodes_sched.json /tmp/setup_pods_sched.json <<'PY'
+import json
+import math
+import re
+import sys
+
+profile_path, nodes_path, pods_path = sys.argv[1:4]
+lines = open(profile_path, "r", encoding="utf-8").read().splitlines()
+nodes = json.load(open(nodes_path, "r", encoding="utf-8"))
+pods = json.load(open(pods_path, "r", encoding="utf-8"))
+
+dbs = ["postgresql", "mongodb", "mysql", "redis", "cassandra"]
+data = {
+    db: {
+        "enabled": False,
+        "instances": 0,
+        "cpu_m": 0,
+        "mem_mib": 0,
+        "config_builder_cpu_m": 0,
+        "config_builder_mem_mib": 0,
+        "system_logger_cpu_m": 0,
+        "system_logger_mem_mib": 0,
+    }
+    for db in dbs
+}
+
+section = None
+path = []
+
+def cpu_to_millis(value):
+    if value is None:
+        return 0
+    value = str(value).strip().strip('"').strip("'")
+    if not value:
+        return 0
+    return int(value[:-1]) if value.endswith("m") else int(float(value) * 1000)
+
+def mem_to_mib(value):
+    if value is None:
+        return 0
+    value = str(value).strip().strip('"').strip("'")
+    if not value:
+        return 0
+    units = {
+        "Ki": 1 / 1024,
+        "Mi": 1,
+        "Gi": 1024,
+        "Ti": 1024 * 1024,
+        "K": 1000 / (1024 * 1024),
+        "M": 1000 * 1000 / (1024 * 1024),
+        "G": 1000 * 1000 * 1000 / (1024 * 1024),
+    }
+    for suffix, factor in units.items():
+        if value.endswith(suffix):
+            return int(math.ceil(float(value[:-len(suffix)]) * factor))
+    return int(math.ceil(float(value) / (1024 * 1024)))
+
+for raw in lines:
+    if not raw.strip() or raw.lstrip().startswith("#"):
+        continue
+    indent = len(raw) - len(raw.lstrip(" "))
+    level = indent // 2
+    line = raw.strip()
+    m = re.match(r"([A-Za-z0-9_]+):\s*(.*)$", line)
+    if not m:
+        continue
+    key, value = m.group(1), m.group(2)
+    path = path[:level]
+    path.append(key)
+
+    if level == 0 and key in dbs:
+        section = key
+    if section != path[0]:
+        continue
+
+    joined = ".".join(path)
+    if joined == f"{section}.enabled":
+        data[section]["enabled"] = value.strip().lower() == "true"
+    elif joined == f"{section}.cluster.instances":
+        data[section]["instances"] = int(value.strip().strip('"').strip("'"))
+    elif joined == f"{section}.cluster.resources.requests.cpu":
+        data[section]["cpu_m"] = cpu_to_millis(value)
+    elif joined == f"{section}.cluster.resources.requests.memory":
+        data[section]["mem_mib"] = mem_to_mib(value)
+    elif joined == f"{section}.cluster.configBuilderResources.requests.cpu":
+        data[section]["config_builder_cpu_m"] = cpu_to_millis(value)
+    elif joined == f"{section}.cluster.configBuilderResources.requests.memory":
+        data[section]["config_builder_mem_mib"] = mem_to_mib(value)
+    elif joined == f"{section}.cluster.systemLoggerResources.requests.cpu":
+        data[section]["system_logger_cpu_m"] = cpu_to_millis(value)
+    elif joined == f"{section}.cluster.systemLoggerResources.requests.memory":
+        data[section]["system_logger_mem_mib"] = mem_to_mib(value)
+
+eligible = {}
+for item in nodes["items"]:
+    name = item["metadata"]["name"]
+    taints = item.get("spec", {}).get("taints", []) or []
+    if taints:
+        continue
+    alloc = item["status"]["allocatable"]
+    eligible[name] = {
+        "avail_cpu_m": cpu_to_millis(alloc.get("cpu")),
+        "avail_mem_mib": mem_to_mib(alloc.get("memory")),
+    }
+
+for pod in pods["items"]:
+    node_name = pod.get("spec", {}).get("nodeName")
+    if node_name not in eligible:
+        continue
+    phase = pod.get("status", {}).get("phase")
+    if phase in {"Succeeded", "Failed"}:
+        continue
+    for container in pod.get("spec", {}).get("containers", []):
+        req = container.get("resources", {}).get("requests", {})
+        eligible[node_name]["avail_cpu_m"] -= cpu_to_millis(req.get("cpu"))
+        eligible[node_name]["avail_mem_mib"] -= mem_to_mib(req.get("memory"))
+
+issues = []
+node_availability = [
+    (name, item["avail_cpu_m"], item["avail_mem_mib"])
+    for name, item in sorted(eligible.items())
+]
+
+for db, cfg in data.items():
+    if not cfg["enabled"] or cfg["instances"] <= 0:
+        continue
+
+    if db == "cassandra":
+        if cfg["config_builder_cpu_m"] == 0:
+            cfg["config_builder_cpu_m"] = 1000
+        if cfg["config_builder_mem_mib"] == 0:
+            cfg["config_builder_mem_mib"] = 256
+        if cfg["system_logger_cpu_m"] == 0:
+            cfg["system_logger_cpu_m"] = 100
+        if cfg["system_logger_mem_mib"] == 0:
+            cfg["system_logger_mem_mib"] = 64
+        steady_cpu = cfg["cpu_m"] + cfg["system_logger_cpu_m"]
+        steady_mem = cfg["mem_mib"] + cfg["system_logger_mem_mib"]
+        init_cpu = cfg["config_builder_cpu_m"]
+        init_mem = cfg["config_builder_mem_mib"]
+        pod_cpu = max(steady_cpu, init_cpu)
+        pod_mem = max(steady_mem, init_mem)
+        needed = cfg["instances"]
+        fitting_nodes = [
+            name for name, avail_cpu, avail_mem in node_availability
+            if avail_cpu >= pod_cpu and avail_mem >= pod_mem
+        ]
+        if len(fitting_nodes) < needed:
+            issues.append(
+                f"cassandra\tneed {needed} nodes with >= {pod_cpu}m CPU and >= {pod_mem}Mi memory free per pod, only {len(fitting_nodes)} fit: {','.join(fitting_nodes) or '-'}"
+            )
+
+if issues:
+    print("\n".join(issues))
+PY
+}
+
 enabled_databases() {
     local PROFILE_FILE
     PROFILE_FILE="${VALUES_FILE:-$CHART_DIR/values.yaml}"
@@ -295,7 +460,7 @@ preflight() {
 
     local PROFILE_LABEL REQUIRED_CPU REQUIRED_MEM
     local TOTAL_ALLOC_CPU TOTAL_ALLOC_MEM TOTAL_REQ_CPU TOTAL_REQ_MEM TOTAL_AVAIL_CPU TOTAL_AVAIL_MEM
-    local RESOURCES_LINE
+    local RESOURCES_LINE SCHED_ISSUES
     PROFILE_LABEL="${VALUES_FILE:-$CHART_DIR/values.yaml}"
     IFS=$'\t' read -r REQUIRED_CPU REQUIRED_MEM <<<"$(required_profile_resources)"
     RESOURCES_LINE="$(schedulable_worker_report)" || die "Failed to inspect schedulable node resources"
@@ -321,6 +486,15 @@ preflight() {
 
     if [ "${TOTAL_AVAIL_CPU:-0}" -lt "$REQUIRED_CPU" ] || [ "${TOTAL_AVAIL_MEM:-0}" -lt "$REQUIRED_MEM" ]; then
         die "Cluster does not have enough available resources on schedulable untainted nodes for this profile."
+    fi
+
+    SCHED_ISSUES="$(profile_schedulability_report)" || die "Failed to evaluate per-node schedulability"
+    if [ -n "$SCHED_ISSUES" ]; then
+        while IFS= read -r issue; do
+            [ -n "$issue" ] || continue
+            info "Scheduling check: $issue"
+        done <<< "$SCHED_ISSUES"
+        die "Profile passes total-capacity checks but would not schedule cleanly on current nodes."
     fi
 
     ok "Preflight checks passed"

@@ -35,6 +35,19 @@ spec:
         limits:
           cpu: {{ .Values.cluster.resources.limits.cpu }}
           memory: {{ .Values.cluster.resources.limits.memory }}
+      configBuilderResources:
+        requests:
+          cpu: {{ .Values.cluster.configBuilderResources.requests.cpu }}
+          memory: {{ .Values.cluster.configBuilderResources.requests.memory }}
+        limits:
+          cpu: {{ .Values.cluster.configBuilderResources.limits.cpu }}
+          memory: {{ .Values.cluster.configBuilderResources.limits.memory }}
+      systemLoggerResources:
+        requests:
+          cpu: {{ .Values.cluster.systemLoggerResources.requests.cpu }}
+          memory: {{ .Values.cluster.systemLoggerResources.requests.memory }}
+        limits:
+          memory: {{ .Values.cluster.systemLoggerResources.limits.memory }}
 
       storageConfig:
         cassandraDataVolumeClaimSpec:

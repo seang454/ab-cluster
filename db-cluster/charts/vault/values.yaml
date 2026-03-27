@@ -71,4 +71,5 @@ redis:
   password: ""
 
 cassandra:
+  username: "cassandra"
   password: ""

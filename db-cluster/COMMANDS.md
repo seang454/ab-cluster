@@ -20,6 +20,11 @@ All commands assume namespace `databases` and release name `my-db`.
 
 These work for all databases regardless of operator.
 
+Notes:
+- A Job pod showing `0/1 Completed` is usually healthy. Jobs finish and do not stay `1/1 Running`.
+- Cassandra pods can show `1/2 Running` during bootstrap while the `cassandra` container is still joining the ring.
+- If you only want active pods, hide completed Jobs with `kubectl get pods -n databases --field-selector=status.phase!=Succeeded`.
+
 ### Cluster overview
 
 ```bash
@@ -28,6 +33,9 @@ kubectl get cluster,psmdb,pxc,rediscluster,k8ssandracluster -n databases
 
 # List all pods
 kubectl get pods -n databases
+
+# List only active pods (hide completed Jobs)
+kubectl get pods -n databases --field-selector=status.phase!=Succeeded
 
 # Watch pods in real time
 kubectl get pods -n databases -w
@@ -523,6 +531,8 @@ kubectl get pxc-restore -n databases
 
 ## Redis — OpsTree Operator
 
+This chart's Redis cluster usually creates 3 leader pods and 3 follower pods when `cluster.instances: 3`.
+
 ### Cluster status
 
 ```bash
@@ -672,6 +682,11 @@ kubectl exec -it my-db-redis-leader-0 -n databases \
 
 ## Cassandra — K8ssandra
 
+Operational notes:
+- Cassandra pods are normally spread across different nodes.
+- `1/2 Running` during bootstrap is expected for a while.
+- The k8ssandra CRD upgrader pod is a Job, so `0/1 Completed` is normal.
+
 ### Cluster status
 
 ```bash
@@ -685,13 +700,19 @@ kubectl get k8ssandracluster my-db-cassandra -n databases -o yaml
 kubectl describe k8ssandracluster my-db-cassandra -n databases
 
 # Check all pods
-kubectl get pods -n databases -l cassandra.datastax.com/cluster=my-db-cassandra
+kubectl get pods -n databases -l cassandra.datastax.com/cluster=seang-cassandra
 
 # Check operator logs
 kubectl logs -n databases deployment/k8ssandra-operator -f
 
 # Check cass-operator logs (sub-operator)
 kubectl logs -n databases deployment/cass-operator -f
+
+# Watch Cassandra pod readiness during bootstrap
+kubectl get pods -n databases -l cassandra.datastax.com/cluster=seang-cassandra -w
+
+# Show CassandraDatacenter status
+kubectl get cassandradatacenter dc1 -n databases -o jsonpath='{.status}'
 ```
 
 ### Ring and node status (nodetool)
@@ -736,6 +757,10 @@ kubectl exec -it my-db-cassandra-dc1-default-sts-0 -n databases \
 # Show data center info
 kubectl exec -it my-db-cassandra-dc1-default-sts-0 -n databases \
   -- nodetool describecluster
+
+# Check management API readiness from inside the pod
+kubectl exec -it my-db-cassandra-dc1-default-sts-0 -n databases -c cassandra \
+  -- curl -i http://127.0.0.1:8080/api/v0/probes/readiness
 ```
 
 ### Connecting with cqlsh

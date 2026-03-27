@@ -34,6 +34,7 @@ Use this before installing.
 Why:
 - It checks whether worker-node CPU is enough for the enabled databases.
 - It prevents long deployments that later fail with `Pending` pods.
+- It is still based on requested resources and can be optimistic if an operator adds extra containers during startup.
 
 ## Build And Install Steps
 
@@ -89,6 +90,7 @@ Use this after storage, Vault, and operators are ready.
 
 Why:
 - This creates the main application resources and database custom resources.
+- If you changed a deployed database to `enabled: false`, `deploy` will usually remove that database's live Kubernetes objects.
 
 12. `./setup.sh operator_plugins`
 Use this when you want to rerun the standalone operator installer script.
