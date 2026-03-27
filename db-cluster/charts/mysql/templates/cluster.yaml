@@ -36,8 +36,25 @@ spec:
 
   haproxy:
     enabled: true
-    size: 3
+    {{- with .Values.haproxy }}
+    size: {{ .size | default 1 }}
     image: percona/percona-xtradb-cluster-operator:1.14.0-haproxy
+    readinessDelaySec: {{ .readinessDelaySeconds | default 15 }}
+    readinessProbes:
+      timeoutSeconds: {{ .readinessTimeoutSeconds | default 5 }}
+    livenessDelaySec: {{ .livenessDelaySeconds | default 60 }}
+    livenessProbes:
+      timeoutSeconds: {{ .livenessTimeoutSeconds | default 5 }}
+    {{- else }}
+    size: 1
+    image: percona/percona-xtradb-cluster-operator:1.14.0-haproxy
+    readinessDelaySec: 15
+    readinessProbes:
+      timeoutSeconds: 5
+    livenessDelaySec: 60
+    livenessProbes:
+      timeoutSeconds: 5
+    {{- end }}
 
   {{- if .Values.backup.enabled }}
   backup:

@@ -33,6 +33,12 @@ mysql:
   enabled: false
   operator:
     enabled: false
+  haproxy:
+    size: 1
+    readinessDelaySeconds: 15
+    readinessTimeoutSeconds: 5
+    livenessDelaySeconds: 60
+    livenessTimeoutSeconds: 5
 
 redis:
   enabled: true

@@ -451,6 +451,32 @@ print(" ".join(enabled))
 PY
 }
 
+prune_disabled_database_operators() {
+    local ENABLED
+    ENABLED=" $(enabled_databases) "
+
+    prune_operator() {
+        local DB="$1"
+        local RELEASE_NAME="$2"
+        local RELEASE_NS="$3"
+        if [[ "$ENABLED" == *" $DB "* ]]; then
+            return 0
+        fi
+        if helm status "$RELEASE_NAME" -n "$RELEASE_NS" >/dev/null 2>&1; then
+            info "Removing disabled $DB operator release: $RELEASE_NAME"
+            helm uninstall "$RELEASE_NAME" -n "$RELEASE_NS" >/dev/null \
+                || die "Failed to uninstall operator release $RELEASE_NAME from namespace $RELEASE_NS"
+            ok "$DB operator removed"
+        fi
+    }
+
+    prune_operator postgresql cnpg cnpg-system
+    prune_operator mongodb psmdb-operator "$NAMESPACE"
+    prune_operator mysql pxc-operator "$NAMESPACE"
+    prune_operator redis redis-operator "$NAMESPACE"
+    prune_operator cassandra k8ssandra-operator "$NAMESPACE"
+}
+
 preflight() {
     log "[0/9] Running preflight checks..."
     command -v kubectl >/dev/null 2>&1 || die "kubectl not found"
@@ -1285,6 +1311,15 @@ upgrade() {
     helm upgrade "$RELEASE" "$CHART_DIR" \
         --namespace "$NAMESPACE" \
         "${HELM_VALUES_ARGS[@]}" \
+        --set "certManager.enabled=false" \
+        --set "externalSecrets.enabled=false" \
+        --set "longhorn.enabled=false" \
+        --set "postgresql.operator.enabled=false" \
+        --set "mongodb.operator.enabled=false" \
+        --set "mysql.operator.enabled=false" \
+        --set "redis.operator.enabled=false" \
+        --set "cassandra.operator.enabled=false" \
+        --set "vaultTransit.enabled=false" \
         --set "vault.postgresql.superuserPassword=$PG_PASS" \
         --set "vault.postgresql.appPassword=$PG_PASS" \
         --set "vault.mongodb.clusterAdminPassword=$MONGO_PASS" \
@@ -1297,7 +1332,10 @@ upgrade() {
         --set "vault.mysql.clusterCheckPassword=$MYSQL_PASS" \
         --set "vault.redis.password=$REDIS_PASS" \
         --set "vault.cassandra.password=$CASS_PASS" \
-        --timeout 10m && ok "Upgrade complete"
+        --timeout 10m \
+        || die "Upgrade failed"
+    prune_disabled_database_operators
+    ok "Upgrade complete"
 }
 
 # =============================================================================

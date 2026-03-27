@@ -135,9 +135,9 @@ vault:
 # POSTGRESQL — CloudNativePG Operator
 # =============================================================================
 postgresql:
-  enabled: false
+  enabled: true
   operator:
-    enabled: false
+    enabled: true
 
   cluster:
     instances: 3
@@ -197,9 +197,9 @@ postgresql:
 # MONGODB — Percona Operator for MongoDB
 # =============================================================================
 mongodb:
-  enabled: false
+  enabled: true
   operator:
-    enabled: false
+    enabled: true
 
   cluster:
     crVersion: "1.22.0"
@@ -232,6 +232,13 @@ mysql:
   operator:
     enabled: false
 
+  haproxy:
+    size: 1
+    readinessDelaySeconds: 15
+    readinessTimeoutSeconds: 5
+    livenessDelaySeconds: 60
+    livenessTimeoutSeconds: 5
+
   cluster:
     instances: 3
     image: percona/percona-xtradb-cluster:8.0
@@ -258,9 +265,9 @@ mysql:
 # REDIS — OpsTree Redis Operator
 # =============================================================================
 redis:
-  enabled: true
+  enabled: false
   operator:
-    enabled: true
+    enabled: false
 
   cluster:
     instances: 3
@@ -285,9 +292,9 @@ redis:
 # CASSANDRA — K8ssandra Operator
 # =============================================================================
 cassandra:
-  enabled: true
+  enabled: false
   operator:
-    enabled: true
+    enabled: false
 
   cluster:
     instances: 3
