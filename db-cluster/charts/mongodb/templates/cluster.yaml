@@ -6,10 +6,19 @@ metadata:
 spec:
   crVersion: {{ .Values.cluster.crVersion | quote }}
   image: {{ .Values.cluster.image }}
+  {{- if .Values.tls.enabled }}
+  tls:
+    mode: requireTLS
+    allowInvalidCertificates: false
+  {{- end }}
 
   # Secret created automatically by ExternalSecret (ESO) from Vault
   secrets:
     users: {{ include "mongodb.secretName" . }}
+    {{- if .Values.tls.enabled }}
+    ssl: {{ include "mongodb.sslSecretName" . }}
+    sslInternal: {{ include "mongodb.sslInternalSecretName" . }}
+    {{- end }}
 
   replsets:
   - name: rs0

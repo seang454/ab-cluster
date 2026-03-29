@@ -1,0 +1,25 @@
+{{- if and .Values.tls.enabled .Values.tls.createSecrets }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "cassandra.serverSecretName" . }}
+  namespace: {{ .Release.Namespace }}
+type: Opaque
+data:
+  keystore: {{ .Values.tls.serverSecret.keystore | quote }}
+  keystore-password: {{ .Values.tls.serverSecret.keystorePassword | quote }}
+  truststore: {{ .Values.tls.serverSecret.truststore | quote }}
+  truststore-password: {{ .Values.tls.serverSecret.truststorePassword | quote }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "cassandra.clientSecretName" . }}
+  namespace: {{ .Release.Namespace }}
+type: Opaque
+data:
+  keystore: {{ .Values.tls.clientSecret.keystore | quote }}
+  keystore-password: {{ .Values.tls.clientSecret.keystorePassword | quote }}
+  truststore: {{ .Values.tls.clientSecret.truststore | quote }}
+  truststore-password: {{ .Values.tls.clientSecret.truststorePassword | quote }}
+{{- end }}

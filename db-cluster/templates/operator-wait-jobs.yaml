@@ -8,7 +8,7 @@ metadata:
   annotations:
     "helm.sh/hook": post-install,post-upgrade
     "helm.sh/hook-weight": "-5"
-    "helm.sh/hook-delete-policy": hook-succeeded,hook-failed
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
 spec:
   template:
     spec:
@@ -22,8 +22,8 @@ spec:
         - -c
         - |
           echo "Waiting for CloudNativePG operator..."
-          kubectl rollout status deployment/cnpg-controller-manager \
-            -n {{ .Release.Namespace }} --timeout=300s
+          kubectl rollout status deployment/cnpg-cloudnative-pg \
+            -n cnpg-system --timeout=300s
           echo "CloudNativePG operator is ready"
 {{- end }}
 ---
@@ -36,7 +36,7 @@ metadata:
   annotations:
     "helm.sh/hook": post-install,post-upgrade
     "helm.sh/hook-weight": "-5"
-    "helm.sh/hook-delete-policy": hook-succeeded,hook-failed
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
 spec:
   template:
     spec:
@@ -64,7 +64,7 @@ metadata:
   annotations:
     "helm.sh/hook": post-install,post-upgrade
     "helm.sh/hook-weight": "-5"
-    "helm.sh/hook-delete-policy": hook-succeeded,hook-failed
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
 spec:
   template:
     spec:
@@ -92,7 +92,7 @@ metadata:
   annotations:
     "helm.sh/hook": post-install,post-upgrade
     "helm.sh/hook-weight": "-5"
-    "helm.sh/hook-delete-policy": hook-succeeded,hook-failed
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
 spec:
   template:
     spec:
@@ -120,7 +120,7 @@ metadata:
   annotations:
     "helm.sh/hook": post-install,post-upgrade
     "helm.sh/hook-weight": "-5"
-    "helm.sh/hook-delete-policy": hook-succeeded,hook-failed
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
 spec:
   template:
     spec:

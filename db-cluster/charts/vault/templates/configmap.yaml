@@ -48,6 +48,12 @@ data:
       cluster-admin-password="{{ .Values.mongodb.clusterAdminPassword }}" \
       user-admin-user="{{ .Values.mongodb.userAdminUser }}" \
       user-admin-password="{{ .Values.mongodb.userAdminPassword }}" \
+      cluster-monitor-user="{{ .Values.mongodb.clusterMonitorUser }}" \
+      cluster-monitor-password="{{ .Values.mongodb.clusterMonitorPassword }}" \
+      database-admin-user="{{ .Values.mongodb.databaseAdminUser }}" \
+      database-admin-password="{{ .Values.mongodb.databaseAdminPassword }}" \
+      backup-user="{{ .Values.mongodb.backupUser }}" \
+      backup-password="{{ .Values.mongodb.backupPassword }}" \
       replication-key="{{ .Values.mongodb.replicationKey }}"
 
     vault kv put databases/mysql \

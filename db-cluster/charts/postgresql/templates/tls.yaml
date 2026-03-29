@@ -1,0 +1,81 @@
+{{- $tls := .Values.tls | default dict -}}
+{{- $cm := $tls.certManager | default dict -}}
+{{- $generateCA := get $cm "generateCA" | default true -}}
+{{- $ext := .Values.externalAccess | default dict -}}
+{{- if and $tls.enabled (eq ($tls.mode | default "certManager") "certManager") }}
+{{- if $generateCA }}
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ include "postgresql.fullname" . }}-selfsigned
+  namespace: {{ .Release.Namespace }}
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "postgresql.caCertificateSecretName" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  isCA: true
+  commonName: {{ include "postgresql.fullname" . }}-ca
+  secretName: {{ include "postgresql.caCertificateSecretName" . }}
+  privateKey:
+    algorithm: RSA
+    size: 2048
+  issuerRef:
+    name: {{ include "postgresql.fullname" . }}-selfsigned
+    kind: Issuer
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ include "postgresql.caIssuerName" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  ca:
+    secretName: {{ include "postgresql.caCertificateSecretName" . }}
+---
+{{- end }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "postgresql.serverTLSSecretName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    cnpg.io/reload: "true"
+spec:
+  secretName: {{ include "postgresql.serverTLSSecretName" . }}
+  commonName: {{ include "postgresql.fullname" . }}-rw
+  privateKey:
+    algorithm: RSA
+    size: 2048
+  dnsNames:
+  - {{ include "postgresql.fullname" . }}-rw
+  - {{ include "postgresql.fullname" . }}-rw.{{ .Release.Namespace }}
+  - {{ include "postgresql.fullname" . }}-rw.{{ .Release.Namespace }}.svc
+  - {{ include "postgresql.fullname" . }}-rw.{{ .Release.Namespace }}.svc.cluster.local
+  - {{ include "postgresql.fullname" . }}-ro
+  - {{ include "postgresql.fullname" . }}-ro.{{ .Release.Namespace }}
+  - {{ include "postgresql.fullname" . }}-ro.{{ .Release.Namespace }}.svc
+  - {{ include "postgresql.fullname" . }}-ro.{{ .Release.Namespace }}.svc.cluster.local
+  - {{ include "postgresql.fullname" . }}-r
+  - {{ include "postgresql.fullname" . }}-r.{{ .Release.Namespace }}
+  - {{ include "postgresql.fullname" . }}-r.{{ .Release.Namespace }}.svc
+  - {{ include "postgresql.fullname" . }}-r.{{ .Release.Namespace }}.svc.cluster.local
+  {{- range ($ext.publicHostnames | default list) }}
+  - {{ . }}
+  {{- end }}
+  issuerRef:
+    {{- if $generateCA }}
+    name: {{ include "postgresql.caIssuerName" . }}
+    kind: Issuer
+    group: cert-manager.io
+    {{- else }}
+    name: {{ get ($cm.issuer | default dict) "name" }}
+    kind: {{ get ($cm.issuer | default dict) "kind" | default "ClusterIssuer" }}
+    group: {{ get ($cm.issuer | default dict) "group" | default "cert-manager.io" }}
+    {{- end }}
+{{- end }}

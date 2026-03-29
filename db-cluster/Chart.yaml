@@ -17,7 +17,7 @@ keywords: [postgresql, mongodb, mysql, redis, cassandra, ha, cluster, operator, 
 # PRE-INSTALLED BY KUBESPRAY (no action needed):
 #   ✔ Kubernetes + RBAC
 #   ✔ cert-manager
-#   ✔ nginx ingress controller
+#   ✔ ingress controller (this repo targets a standard Kubernetes Ingress)
 #
 # INSTALL LONGHORN SEPARATELY:
 #   helm repo add longhorn https://charts.longhorn.io && helm repo update

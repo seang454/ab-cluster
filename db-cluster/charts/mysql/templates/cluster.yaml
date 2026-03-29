@@ -3,11 +3,16 @@ kind: PerconaXtraDBCluster
 metadata:
   name: {{ include "mysql.fullname" . }}
   namespace: {{ .Release.Namespace }}
+{{- $ext := .Values.externalAccess | default dict }}
 spec:
   crVersion: 1.14.0
 
   # Secret created automatically by ExternalSecret (ESO) from Vault
   secretsName: {{ include "mysql.secretName" . }}
+  {{- if .Values.tls.enabled }}
+  sslSecretName: {{ include "mysql.sslSecretName" . }}
+  sslInternalSecretName: {{ include "mysql.sslInternalSecretName" . }}
+  {{- end }}
 
   pxc:
     size: {{ .Values.cluster.instances }}
@@ -36,6 +41,26 @@ spec:
 
   haproxy:
     enabled: true
+    {{- if $ext.enabled }}
+    exposePrimary:
+      enabled: true
+      type: LoadBalancer
+      {{- if $ext.loadBalancerClass }}
+      loadBalancerClass: {{ $ext.loadBalancerClass }}
+      {{- end }}
+      {{- with $ext.loadBalancerSourceRanges }}
+      loadBalancerSourceRanges:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $ext.annotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $ext.labels }}
+      labels:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- end }}
     {{- with .Values.haproxy }}
     size: {{ .size | default 1 }}
     image: percona/percona-xtradb-cluster-operator:1.14.0-haproxy

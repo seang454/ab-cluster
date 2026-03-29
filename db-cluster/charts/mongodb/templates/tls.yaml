@@ -1,0 +1,98 @@
+{{- $tls := .Values.tls | default dict -}}
+{{- $cm := $tls.certManager | default dict -}}
+{{- $generateCA := get $cm "generateCA" | default true -}}
+{{- $ext := .Values.externalAccess | default dict -}}
+{{- if and $tls.enabled (eq ($tls.mode | default "certManager") "certManager") }}
+{{- if $generateCA }}
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ include "mongodb.fullname" . }}-selfsigned
+  namespace: {{ .Release.Namespace }}
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "mongodb.caCertificateSecretName" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  isCA: true
+  commonName: {{ include "mongodb.fullname" . }}-ca
+  secretName: {{ include "mongodb.caCertificateSecretName" . }}
+  privateKey:
+    algorithm: RSA
+    size: 2048
+  issuerRef:
+    name: {{ include "mongodb.fullname" . }}-selfsigned
+    kind: Issuer
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ include "mongodb.caIssuerName" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  ca:
+    secretName: {{ include "mongodb.caCertificateSecretName" . }}
+---
+{{- end }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "mongodb.sslSecretName" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  secretName: {{ include "mongodb.sslSecretName" . }}
+  commonName: {{ include "mongodb.fullname" . }}-rs0
+  privateKey:
+    algorithm: RSA
+    size: 2048
+  dnsNames:
+  - {{ include "mongodb.fullname" . }}-rs0
+  - {{ include "mongodb.fullname" . }}-rs0.{{ .Release.Namespace }}
+  - {{ include "mongodb.fullname" . }}-rs0.{{ .Release.Namespace }}.svc
+  - {{ include "mongodb.fullname" . }}-rs0.{{ .Release.Namespace }}.svc.cluster.local
+  {{- range ($ext.publicHostnames | default list) }}
+  - {{ . }}
+  {{- end }}
+  issuerRef:
+    {{- if $generateCA }}
+    name: {{ include "mongodb.caIssuerName" . }}
+    kind: Issuer
+    group: cert-manager.io
+    {{- else }}
+    name: {{ get ($cm.issuer | default dict) "name" }}
+    kind: {{ get ($cm.issuer | default dict) "kind" | default "ClusterIssuer" }}
+    group: {{ get ($cm.issuer | default dict) "group" | default "cert-manager.io" }}
+    {{- end }}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "mongodb.sslInternalSecretName" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  secretName: {{ include "mongodb.sslInternalSecretName" . }}
+  commonName: {{ include "mongodb.fullname" . }}-internal
+  privateKey:
+    algorithm: RSA
+    size: 2048
+  dnsNames:
+  - "*.{{ include "mongodb.fullname" . }}-rs0"
+  - "*.{{ include "mongodb.fullname" . }}-rs0.{{ .Release.Namespace }}"
+  - "*.{{ include "mongodb.fullname" . }}-rs0.{{ .Release.Namespace }}.svc"
+  - "*.{{ include "mongodb.fullname" . }}-rs0.{{ .Release.Namespace }}.svc.cluster.local"
+  issuerRef:
+    {{- if $generateCA }}
+    name: {{ include "mongodb.caIssuerName" . }}
+    kind: Issuer
+    group: cert-manager.io
+    {{- else }}
+    name: {{ get ($cm.issuer | default dict) "name" }}
+    kind: {{ get ($cm.issuer | default dict) "kind" | default "ClusterIssuer" }}
+    group: {{ get ($cm.issuer | default dict) "group" | default "cert-manager.io" }}
+    {{- end }}
+{{- end }}

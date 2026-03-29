@@ -3,10 +3,22 @@ kind: Cluster
 metadata:
   name: {{ include "postgresql.fullname" . }}
   namespace: {{ .Release.Namespace }}
+{{- $ext := .Values.externalAccess | default dict }}
+{{- $externalIPs := list -}}
+{{- if $ext.externalIP }}
+{{- $externalIPs = concat $externalIPs (list $ext.externalIP) -}}
+{{- end }}
+{{- with $ext.externalIPs }}
+{{- $externalIPs = concat $externalIPs . -}}
+{{- end }}
 spec:
   instances: {{ .Values.cluster.instances }}
   imageName: {{ .Values.cluster.imageName }}
-
+  {{- if and .Values.tls.enabled (ne (.Values.tls.mode | default "certManager") "operator") }}
+  certificates:
+    serverTLSSecret: {{ include "postgresql.serverTLSSecretName" . }}
+    serverCASecret: {{ include "postgresql.serverCASecretName" . }}
+  {{- end }}
   # Secret created automatically by ExternalSecret (ESO) from Vault
   superuserSecret:
     name: {{ include "postgresql.superuserSecretName" . }}

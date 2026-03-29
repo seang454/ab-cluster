@@ -9,6 +9,8 @@ An umbrella Helm chart that deploys production-grade database clusters on Kubern
 ```
 Kubernetes Cluster (3 nodes × 2CPU / 8GB / 50GB)
 │
+├── Ingress Controller          → handles web app / UI ingress
+├── cert-manager               → issues and renews TLS certificates
 ├── CloudNativePG Operator     → manages PostgreSQL cluster
 ├── Percona Operator (PSMDB)   → manages MongoDB cluster
 ├── Percona Operator (PXC)     → manages MySQL cluster
@@ -17,7 +19,7 @@ Kubernetes Cluster (3 nodes × 2CPU / 8GB / 50GB)
          │
          └── db-cluster (this Helm chart)
                   │
-                  ├── postgresql/  → kind: Cluster (cnpg)
+                 ├── postgresql/  → kind: Cluster (cnpg)
                   ├── mongodb/     → kind: PerconaServerMongoDB
                   ├── mysql/       → kind: PerconaXtraDBCluster
                   ├── redis/       → kind: RedisCluster
@@ -28,6 +30,47 @@ Kubernetes Cluster (3 nodes × 2CPU / 8GB / 50GB)
 
 ## Databases
 
+Traffic model in this repo:
+- Web-facing HTTP/HTTPS: `Ingress Controller + cert-manager`
+- App-to-database traffic: `Kubernetes Service + TLS on the database`
+- Database services stay internal by default in the example profile
+- If you later expose a database to the internet, use its native database port and TLS rather than standard HTTP Ingress
+
+Cloudflare automation flow:
+
+```text
+values.yaml / values override
+   |
+   | zoneName + externalIP + publicHostnames
+   v
+Cloudflare DNS Job
+   |
+   | reads token from Kubernetes Secret
+   v
+Cloudflare API
+   |
+   v
+DNS-only A records for DB hostnames
+```
+
+Recommended token handling:
+
+```bash
+export CLOUDFLARE_API_TOKEN=YOUR_CLOUDFLARE_API_TOKEN
+./setup.sh cloudflare_secret
+```
+
+Then enable the feature in values:
+
+```yaml
+cloudflare:
+  enabled: true
+  zoneName: seang.shop
+  externalIP: 35.194.146.154
+  proxied: false
+  apiTokenExistingSecret: cloudflare-api-token
+```
+
 ### PostgreSQL — CloudNativePG
 - **Operator:** CloudNativePG (CNPG)
 - **Custom resource:** `kind: Cluster` (`postgresql.cnpg.io/v1`)
@@ -36,6 +79,7 @@ Kubernetes Cluster (3 nodes × 2CPU / 8GB / 50GB)
 - **Backup:** barmanObjectStore → S3 / GCS (configure in values.yaml)
 - **Monitoring:** Native PodMonitor support for Prometheus
 - **Extra features:** Separate WAL storage, PostgreSQL parameter tuning, switchover/failover delay control
+- **TLS in this chart:** CNPG operator-managed TLS by default; optional custom secret wiring if you explicitly switch modes
 
 ### MongoDB — Percona Operator for MongoDB (PSMDB)
 - **Operator:** Percona Server for MongoDB Operator
@@ -44,6 +88,7 @@ Kubernetes Cluster (3 nodes × 2CPU / 8GB / 50GB)
 - **Failover:** Automatic in ~10 seconds — replica set votes and elects new primary
 - **Backup:** Percona Backup for MongoDB (PBM) → S3 (configure in values.yaml)
 - **Replication:** oplog streaming from primary to secondaries
+- **TLS in this chart:** Optional cert-manager-managed `ssl` and `sslInternal` secrets
 
 ### MySQL — Percona Operator for MySQL (PXC)
 - **Operator:** Percona XtraDB Cluster Operator
@@ -52,6 +97,7 @@ Kubernetes Cluster (3 nodes × 2CPU / 8GB / 50GB)
 - **Failover:** Automatic — HAProxy routes traffic away from failed node
 - **Backup:** Built-in scheduled backup to S3 (configure in values.yaml)
 - **Extra features:** HAProxy load balancer included, synchronous replication
+- **TLS in this chart:** Optional cert-manager-managed `ssl` and `ssl-internal` secrets
 
 ### Redis — OpsTree Redis Operator
 - **Operator:** OpsTree Redis Operator
@@ -60,6 +106,7 @@ Kubernetes Cluster (3 nodes × 2CPU / 8GB / 50GB)
 - **Failover:** Automatic — followers promoted to leader on failure
 - **Default topology in this chart:** `cluster.instances: 3` creates 3 leader pods and 3 follower pods
 - **Monitoring:** Optional Redis Exporter sidecar for Prometheus
+- **TLS in this chart:** Optional cert-manager-managed TLS secret wired into the operator `TLS` block
 
 ### Cassandra — K8ssandra Operator
 - **Operator:** K8ssandra Operator
@@ -69,6 +116,7 @@ Kubernetes Cluster (3 nodes × 2CPU / 8GB / 50GB)
 - **Backup:** Medusa backup → S3 (configure in values.yaml)
 - **Extra features:** Multi-datacenter support, Reaper for repairs
 - **Bootstrap note:** Cassandra pods can stay `Running` but not `Ready` (`1/2`) for several minutes while the ring forms and auth/system tables initialize
+- **TLS in this chart:** Client and internode encryption via K8ssandra encryption-store secrets
 
 ---
 

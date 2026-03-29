@@ -58,6 +58,12 @@ mongodb:
   clusterAdminPassword: ""
   userAdminUser: "userAdmin"
   userAdminPassword: ""
+  clusterMonitorUser: "clusterMonitor"
+  clusterMonitorPassword: ""
+  databaseAdminUser: "databaseAdmin"
+  databaseAdminPassword: ""
+  backupUser: "backup"
+  backupPassword: ""
   replicationKey: ""
 
 mysql:

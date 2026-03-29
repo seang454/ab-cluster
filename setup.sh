@@ -561,8 +561,35 @@ repos() {
     helm repo add k8ssandra   https://helm.k8ssandra.io/stable           2>/dev/null || true
     helm repo add ext-secrets https://charts.external-secrets.io         2>/dev/null || true
     helm repo add longhorn    https://charts.longhorn.io                 2>/dev/null || true
+    helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx 2>/dev/null || true
     helm repo update
     ok "Repos ready"
+}
+
+ingress_nginx() {
+    log "[optional] Installing ingress-nginx controller..."
+    if helm status ingress-nginx -n ingress-nginx >/dev/null 2>&1; then
+        info "ingress-nginx already installed — reconciling desired config"
+    elif kubectl get ingressclass nginx >/dev/null 2>&1; then
+        ok "IngressClass nginx already exists — skipping"
+        return 0
+    fi
+
+    helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
+        --namespace ingress-nginx \
+        --create-namespace \
+        --set controller.kind=DaemonSet \
+        --set controller.hostNetwork=true \
+        --set controller.dnsPolicy=ClusterFirstWithHostNet \
+        --set controller.service.type=ClusterIP \
+        --set controller.ingressClassResource.name=nginx \
+        --set controller.ingressClassResource.controllerValue=k8s.io/ingress-nginx \
+        --set controller.ingressClass=nginx \
+        --set controller.ingressClassResource.default=false \
+        --wait --timeout 10m \
+        || die "ingress-nginx install failed"
+
+    ok "ingress-nginx ready"
 }
 
 # =============================================================================
@@ -1075,6 +1102,7 @@ deploy() {
     : "${MYSQL_PASS:?Add MYSQL_PASS to .env}"
     : "${REDIS_PASS:?Add REDIS_PASS to .env}"
     : "${CASS_PASS:?Add CASS_PASS to .env}"
+    ensure_cloudflare_secret_if_present
 
     # Clean up any ad-hoc RBAC from previous recovery attempts so Helm can own it.
     kubectl delete role my-db-vault-auth-secret-reader -n "$NAMESPACE" --ignore-not-found 2>/dev/null || true
@@ -1088,9 +1116,7 @@ deploy() {
     helm upgrade --install "$RELEASE" "$CHART_DIR" \
         --namespace "$NAMESPACE" --create-namespace \
         "${HELM_VALUES_ARGS[@]}" \
-        --set "certManager.enabled=false" \
         --set "externalSecrets.enabled=false" \
-        --set "longhorn.enabled=false" \
         --set "postgresql.operator.enabled=false" \
         --set "mongodb.operator.enabled=false" \
         --set "mysql.operator.enabled=false" \
@@ -1181,6 +1207,7 @@ setup() {
 
     preflight       || die "Step preflight failed"
     repos           || die "Step repos failed"
+    ingress_nginx   || die "Step ingress_nginx failed"
     longhorn        || die "Step longhorn failed"
     deps            || die "Step deps failed"
     vault_transit   || die "Step vault_transit failed"
@@ -1254,6 +1281,21 @@ mysql()      { kubectl port-forward svc/"$RELEASE"-mysql-haproxy 3306:3306 -n "$
 cassandra()  { kubectl port-forward svc/"$RELEASE"-dc1-service 9042:9042 -n "$NAMESPACE"; }
 vault_ui()   { kubectl port-forward svc/vault 8200:8200 -n "$VAULT_NS"; }
 longhorn_ui(){ kubectl port-forward svc/longhorn-frontend 8080:80 -n longhorn-system; }
+cloudflare_secret() {
+    : "${CLOUDFLARE_API_TOKEN:?Add CLOUDFLARE_API_TOKEN to your environment or .env}"
+    kubectl create namespace "$NAMESPACE" 2>/dev/null || true
+    kubectl create secret generic cloudflare-api-token \
+        --from-literal=token="$CLOUDFLARE_API_TOKEN" \
+        --namespace "$NAMESPACE" \
+        --dry-run=client -o yaml | kubectl apply -f -
+    ok "cloudflare-api-token secret created in $NAMESPACE"
+}
+
+ensure_cloudflare_secret_if_present() {
+    if [ -n "${CLOUDFLARE_API_TOKEN:-}" ]; then
+        cloudflare_secret
+    fi
+}
 
 # =============================================================================
 # VAULT OPS
@@ -1304,6 +1346,7 @@ sync() {
 upgrade() {
     : "${PG_PASS:?}" ; : "${MONGO_PASS:?}" ; : "${MYSQL_PASS:?}"
     : "${REDIS_PASS:?}" ; : "${CASS_PASS:?}"
+    ensure_cloudflare_secret_if_present
     local HELM_VALUES_ARGS=()
     if [ -n "$VALUES_FILE" ]; then
         mapfile -t HELM_VALUES_ARGS < <(values_args)
@@ -1311,9 +1354,7 @@ upgrade() {
     helm upgrade "$RELEASE" "$CHART_DIR" \
         --namespace "$NAMESPACE" \
         "${HELM_VALUES_ARGS[@]}" \
-        --set "certManager.enabled=false" \
         --set "externalSecrets.enabled=false" \
-        --set "longhorn.enabled=false" \
         --set "postgresql.operator.enabled=false" \
         --set "mongodb.operator.enabled=false" \
         --set "mysql.operator.enabled=false" \
@@ -1364,7 +1405,7 @@ teardown() {
 
     # ── 2. Remove ALL PVC/PV finalizers BEFORE uninstalling anything ──────
     log "[2/8] Removing PVC and PV finalizers..."
-    ALL_NS="$NAMESPACE $VAULT_NS $TRANSIT_NS longhorn-system external-secrets cnpg-system"
+    ALL_NS="$NAMESPACE $VAULT_NS $TRANSIT_NS longhorn-system external-secrets cnpg-system ingress-nginx traefik"
     for ns in $ALL_NS; do
         for pvc in $(kubectl get pvc -n "$ns" -o name --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null); do
             kubectl patch "$pvc" -n "$ns"                 -p '{"metadata":{"finalizers":[]}}' --type=merge --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null || true
@@ -1397,6 +1438,11 @@ teardown() {
     helm uninstall external-secrets -n external-secrets 2>/dev/null || true
     helm uninstall cnpg             -n cnpg-system      2>/dev/null || true
     helm uninstall psmdb-operator   -n "$NAMESPACE"     2>/dev/null || true
+    helm uninstall pxc-operator     -n "$NAMESPACE"     2>/dev/null || true
+    helm uninstall redis-operator   -n "$NAMESPACE"     2>/dev/null || true
+    helm uninstall k8ssandra-operator -n "$NAMESPACE"   2>/dev/null || true
+    helm uninstall ingress-nginx    -n ingress-nginx    2>/dev/null || true
+    helm uninstall traefik          -n traefik          2>/dev/null || true
     helm uninstall longhorn         -n longhorn-system  2>/dev/null || true
     ok "Helm releases uninstalled"
 
@@ -1407,7 +1453,7 @@ teardown() {
         kubectl delete crd "$crd" --force --grace-period=0 --wait=false --ignore-not-found --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null || true
     done
     # Delete any operator CRDs (CNPG, Percona)
-    for crd in $(kubectl get crd --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null | grep -E "cnpg|percona|psmdb|pxc|external-secrets|externalsecrets|clustersecretstores" | awk '{print $1}'); do
+    for crd in $(kubectl get crd --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null | grep -E "cnpg|percona|psmdb|pxc|external-secrets|externalsecrets|clustersecretstores|redis\\.opstreelabs|k8ssandra|cassandradatacenters|cassandratasks|clientconfigs" | awk '{print $1}'); do
         kubectl patch crd "$crd"             -p '{"metadata":{"finalizers":[]}}' --type=merge --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null || true
         kubectl delete crd "$crd" --force --grace-period=0 --wait=false --ignore-not-found --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null || true
     done
@@ -1421,7 +1467,7 @@ teardown() {
 
     # ── 7. Delete all namespaces ──────────────────────────────────────────
     log "[7/8] Deleting namespaces..."
-    for ns in "$NAMESPACE" "$VAULT_NS" "$TRANSIT_NS"               external-secrets cnpg-system longhorn-system; do
+    for ns in "$NAMESPACE" "$VAULT_NS" "$TRANSIT_NS"               external-secrets cnpg-system longhorn-system ingress-nginx traefik; do
         # Final PVC sweep
         for pvc in $(kubectl get pvc -n "$ns" -o name --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null); do
             kubectl patch "$pvc" -n "$ns"                 -p '{"metadata":{"finalizers":[]}}' --type=merge --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null || true
@@ -1451,12 +1497,12 @@ teardown() {
 
     echo ""
     echo "  Remaining namespaces:"
-    NS_LEFT=$(kubectl get namespace --no-headers 2>/dev/null |         grep -E "^vault|^databases|^longhorn|^external-secrets|^cnpg" || true)
+    NS_LEFT=$(kubectl get namespace --no-headers 2>/dev/null |         grep -E "^vault|^databases|^longhorn|^external-secrets|^cnpg|^ingress-nginx|^traefik" || true)
     [ -n "$NS_LEFT" ] && echo "$NS_LEFT" || echo "    none ✓"
 
     echo ""
     echo "  Remaining CRDs (longhorn/cnpg/percona):"
-    CRDS=$(kubectl get crd 2>/dev/null |         grep -E "longhorn|cnpg|percona|psmdb|external-secrets" || true)
+    CRDS=$(kubectl get crd 2>/dev/null |         grep -E "longhorn|cnpg|percona|psmdb|external-secrets|redis\\.opstreelabs|k8ssandra|cassandradatacenters|cassandratasks|clientconfigs" || true)
     [ -n "$CRDS" ] && echo "$CRDS" || echo "    none ✓"
 
     echo ""
@@ -1500,84 +1546,99 @@ usage() {
     echo "   Why install it: the databases in this stack are stateful and need"
     echo "   persistent volumes. Without storage, PVCs will not bind."
     echo ""
-    echo "6. deps"
+    echo "6. ingress_nginx"
+    echo "   Install the ingress-nginx controller."
+    echo "   Why install it: this repo now renders standard Kubernetes Ingress"
+    echo "   resources with ingressClassName=nginx for the web UIs."
+    echo ""
+    echo "7. deps"
     echo "   Refresh local chart dependencies."
     echo "   Why install it: the umbrella chart uses packaged child charts that"
     echo "   must be present locally before Helm can deploy them."
     echo ""
-    echo "7. vault_transit"
+    echo "8. vault_transit"
     echo "   Install transit Vault for auto-unseal."
     echo "   Why install it: it acts as the unseal authority for the main Vault"
     echo "   cluster so restarts do not require manual unseal every time."
     echo ""
-    echo "8. vault_install"
+    echo "9. vault_install"
     echo "   Install the main Vault cluster."
     echo "   Why install it: Vault is the source of truth for database passwords"
     echo "   and secrets used by the rest of the platform."
     echo ""
-    echo "9. vault_init"
+    echo "10. vault_init"
     echo "   Initialize Vault and create the token secret used later."
     echo "   Why install it: an uninitialized Vault cannot serve secrets."
     echo ""
-    echo "10. install_operators"
+    echo "11. install_operators"
     echo "    Install database operators."
     echo "    Why install them: operators are the controllers that create and"
     echo "    manage PostgreSQL, MongoDB, MySQL, Redis, and Cassandra clusters."
     echo ""
-    echo "11. deploy"
+    echo "12. deploy"
     echo "    Deploy the db-cluster chart and database resources."
     echo "    Why install it: this is the step that creates the actual database"
     echo "    custom resources, secrets wiring, ingress, and supporting objects."
     echo ""
-    echo "12. operator_plugins"
+    echo "13. operator_plugins"
     echo "    Rerun the standalone operator installer script."
     echo "    Why install it: useful when operators need repair or reinstall"
     echo "    without rerunning the entire stack."
     echo ""
-    echo "13. status"
+    echo "14. status"
     echo "    Show pods and PVCs across the main namespaces."
     echo "    Why use it: quick health check after install or during debugging."
     echo ""
-    echo "14. clusters"
+    echo "15. clusters"
     echo "    Show database custom resources."
     echo "    Why use it: operators report database state through CRs, not only pods."
     echo ""
-    echo "15. vault_status"
+    echo "16. vault_status"
     echo "    Check seal and health status of Vault."
     echo "    Why use it: if Vault is sealed or unhealthy, secret sync and auth"
     echo "    problems will appear across the platform."
     echo ""
-    echo "16. upgrade"
+    echo "17. upgrade"
     echo "    Reapply the Helm release after values or password changes."
     echo "    Why use it: update the running release without tearing it down."
     echo ""
-    echo "17. sync"
+    echo "18. sync"
     echo "    Force External Secrets sync from Vault."
     echo "    Why use it: push updated Vault values back into Kubernetes secrets."
     echo ""
-    echo "18. vault_list"
+    echo "19. vault_list"
     echo "    List database secret paths in Vault."
     echo "    Why use it: confirm secret paths were created as expected."
     echo ""
-    echo "19. vault_get <db>"
+    echo "20. vault_get <db>"
     echo "    Read one database secret from Vault."
     echo "    Why use it: debug credential mismatches for a specific database."
     echo ""
-    echo "20. rotate <db> <pass>"
+    echo "21. rotate <db> <pass>"
     echo "    Rotate one database password in Vault."
     echo "    Why use it: Vault is the source of truth, so rotation should start there."
     echo ""
-    echo "21. pg | mongo | redis | mysql | cassandra"
+    echo "22. pg | mongo | redis | mysql | cassandra"
     echo "    Port-forward one database locally."
     echo "    Why use it: local access for admin work without exposing databases publicly."
     echo ""
-    echo "22. vault_ui | longhorn_ui"
+    echo "23. vault_ui | longhorn_ui"
     echo "    Port-forward Vault UI or Longhorn UI locally."
     echo "    Why use it: inspect secret state or storage state safely from your machine."
     echo ""
-    echo "23. teardown"
+    echo "24. cloudflare_secret"
+    echo "    Create or update the Cloudflare API token secret."
+    echo "    Why use it: the Cloudflare DNS automation job reads the token from"
+    echo "    a Kubernetes secret instead of plain Helm values."
+    echo ""
+    echo "25. teardown"
     echo "    Delete the entire platform. Destructive."
     echo "    Why use it: reset the cluster when you want a clean reinstall."
+    echo ""
+    echo "Ingress note:"
+    echo "   This project uses standard Kubernetes Ingress for web UIs."
+    echo "   setup installs ingress-nginx automatically unless your cluster"
+    echo "   already provides an nginx IngressClass."
     echo ""
     echo "More detail: see HELP.md"
 }
@@ -1585,8 +1646,8 @@ usage() {
 CMD="${1:-setup}"; shift 2>/dev/null || true
 case "$CMD" in
     setup|small_setup|teardown|status|clusters|vault_status|upgrade|sync|usage|\
-    preflight|repos|longhorn|deps|vault_transit|vault_install|vault_init|\
-    install_operators|deploy|operator_plugins|vault_list|vault_get|rotate|\
+    preflight|repos|ingress_nginx|longhorn|deps|vault_transit|vault_install|vault_init|\
+    install_operators|deploy|operator_plugins|vault_list|vault_get|rotate|cloudflare_secret|\
     pg|mongo|redis|mysql|cassandra|vault_ui|longhorn_ui)
         "$CMD" "$@" ;;
     *) echo "Unknown: $CMD"; usage; exit 1 ;;

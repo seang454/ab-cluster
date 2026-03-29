@@ -1,0 +1,54 @@
+{{- $ext := .Values.externalAccess | default dict -}}
+{{- if $ext.enabled }}
+{{- $externalIPs := list -}}
+{{- if $ext.externalIP }}
+{{- $externalIPs = concat $externalIPs (list $ext.externalIP) -}}
+{{- end }}
+{{- with $ext.externalIPs }}
+{{- $externalIPs = concat $externalIPs . -}}
+{{- end }}
+{{- $serviceType := $ext.serviceType | default "" -}}
+{{- if not $serviceType }}
+{{- if gt (len $externalIPs) 0 }}
+{{- $serviceType = "ClusterIP" -}}
+{{- else }}
+{{- $serviceType = "LoadBalancer" -}}
+{{- end }}
+{{- end }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "postgresql.externalServiceName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    cnpg.io/cluster: {{ include "postgresql.fullname" . }}
+    {{- with $ext.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with $ext.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ $serviceType }}
+  {{- if gt (len $externalIPs) 0 }}
+  externalIPs:
+    {{- toYaml $externalIPs | nindent 4 }}
+  {{- end }}
+  {{- if $ext.loadBalancerClass }}
+  loadBalancerClass: {{ $ext.loadBalancerClass }}
+  {{- end }}
+  {{- with $ext.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  ports:
+  - name: postgres
+    port: 5432
+    protocol: TCP
+    targetPort: 5432
+  selector:
+    cnpg.io/cluster: {{ include "postgresql.fullname" . }}
+    role: primary
+{{- end }}

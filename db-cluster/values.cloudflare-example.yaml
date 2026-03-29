@@ -1,0 +1,100 @@
+# Example overlay for exposing web UIs over HTTPS through a standard
+# Kubernetes ingress controller and PostgreSQL externally on 5432 with TLS.
+#
+# Cloudflare requirement:
+# - Use DNS-only records for the UI hostnames below.
+# - `postgres-db.seang.shop` also points to the same external IP.
+
+cloudflare:
+  enabled: true
+  zoneName: seang.shop
+  externalIP: 35.194.146.154
+  proxied: false
+  ttl: 1
+  # Prefer setting apiTokenExistingSecret instead of storing the token directly
+  # in the values file.
+  apiTokenExistingSecret: cloudflare-api-token
+
+ingress:
+  className: nginx
+
+externalTcpProxy:
+  enabled: true
+  replicas: 1
+  hostNetwork: true
+  nodeSelector:
+    kubernetes.io/hostname: worker01
+  expose:
+    postgresql: true
+    mysql: false
+    mongodb: false
+    redis: false
+    cassandra: false
+
+longhorn:
+  ingress:
+    enabled: true
+    host: longhorn.seang.shop
+    ingressClassName: nginx
+    tls:
+      enabled: true
+      secretName: longhorn-tls
+      clusterIssuer: letsencrypt-prod
+
+vault:
+  ingress:
+    enabled: true
+    namespace: vault
+    host: vault.seang.shop
+    ingressClassName: nginx
+    tls:
+      enabled: true
+      secretName: vault-tls
+      clusterIssuer: letsencrypt-prod
+
+postgresql:
+  enabled: true
+  externalAccess:
+    enabled: false
+    publicHostnames:
+      - postgres-db.seang.shop
+  tls:
+    enabled: true
+    mode: certManager
+
+mysql:
+  enabled: false
+  externalAccess:
+    enabled: false
+    publicHostnames: []
+  tls:
+    enabled: true
+    mode: certManager
+
+mongodb:
+  enabled: false
+  externalAccess:
+    enabled: false
+    publicHostnames: []
+  tls:
+    enabled: true
+    mode: certManager
+
+redis:
+  enabled: false
+  externalAccess:
+    enabled: false
+    publicHostnames: []
+  tls:
+    enabled: true
+
+cassandra:
+  enabled: false
+  externalAccess:
+    enabled: false
+    publicHostnames: []
+  tls:
+    enabled: false
+    # Cassandra needs keystore/truststore material instead of PEM certs.
+    # Set createSecrets=true and provide base64-encoded store content, or point
+    # serverSecretName/clientSecretName at pre-created secrets.

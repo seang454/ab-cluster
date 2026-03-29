@@ -1,0 +1,98 @@
+{{- $tls := .Values.tls | default dict -}}
+{{- $cm := $tls.certManager | default dict -}}
+{{- $generateCA := get $cm "generateCA" | default true -}}
+{{- $ext := .Values.externalAccess | default dict -}}
+{{- if and $tls.enabled (eq ($tls.mode | default "certManager") "certManager") }}
+{{- if $generateCA }}
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ include "mysql.fullname" . }}-selfsigned
+  namespace: {{ .Release.Namespace }}
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "mysql.caCertificateSecretName" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  isCA: true
+  commonName: {{ include "mysql.fullname" . }}-ca
+  secretName: {{ include "mysql.caCertificateSecretName" . }}
+  privateKey:
+    algorithm: RSA
+    size: 2048
+  issuerRef:
+    name: {{ include "mysql.fullname" . }}-selfsigned
+    kind: Issuer
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ include "mysql.caIssuerName" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  ca:
+    secretName: {{ include "mysql.caCertificateSecretName" . }}
+---
+{{- end }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "mysql.sslSecretName" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  secretName: {{ include "mysql.sslSecretName" . }}
+  commonName: {{ include "mysql.fullname" . }}-haproxy
+  privateKey:
+    algorithm: RSA
+    size: 2048
+  dnsNames:
+  - {{ include "mysql.fullname" . }}-haproxy
+  - {{ include "mysql.fullname" . }}-haproxy.{{ .Release.Namespace }}
+  - {{ include "mysql.fullname" . }}-haproxy.{{ .Release.Namespace }}.svc
+  - {{ include "mysql.fullname" . }}-haproxy.{{ .Release.Namespace }}.svc.cluster.local
+  {{- range ($ext.publicHostnames | default list) }}
+  - {{ . }}
+  {{- end }}
+  issuerRef:
+    {{- if $generateCA }}
+    name: {{ include "mysql.caIssuerName" . }}
+    kind: Issuer
+    group: cert-manager.io
+    {{- else }}
+    name: {{ get ($cm.issuer | default dict) "name" }}
+    kind: {{ get ($cm.issuer | default dict) "kind" | default "ClusterIssuer" }}
+    group: {{ get ($cm.issuer | default dict) "group" | default "cert-manager.io" }}
+    {{- end }}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "mysql.sslInternalSecretName" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  secretName: {{ include "mysql.sslInternalSecretName" . }}
+  commonName: {{ include "mysql.fullname" . }}-pxc-internal
+  privateKey:
+    algorithm: RSA
+    size: 2048
+  dnsNames:
+  - "*.{{ include "mysql.fullname" . }}-pxc"
+  - "*.{{ include "mysql.fullname" . }}-pxc.{{ .Release.Namespace }}"
+  - "*.{{ include "mysql.fullname" . }}-pxc.{{ .Release.Namespace }}.svc"
+  - "*.{{ include "mysql.fullname" . }}-pxc.{{ .Release.Namespace }}.svc.cluster.local"
+  issuerRef:
+    {{- if $generateCA }}
+    name: {{ include "mysql.caIssuerName" . }}
+    kind: Issuer
+    group: cert-manager.io
+    {{- else }}
+    name: {{ get ($cm.issuer | default dict) "name" }}
+    kind: {{ get ($cm.issuer | default dict) "kind" | default "ClusterIssuer" }}
+    group: {{ get ($cm.issuer | default dict) "group" | default "cert-manager.io" }}
+    {{- end }}
+{{- end }}
