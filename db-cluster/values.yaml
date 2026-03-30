@@ -32,8 +32,11 @@ externalTcpProxy:
     tag: "3.0-alpine"
     pullPolicy: IfNotPresent
   replicas: 1
+  # Bind HAProxy directly to the node network so the node's public IP can
+  # accept raw database TCP traffic such as 5432.
   hostNetwork: true
   dnsPolicy: ClusterFirstWithHostNet
+  # Pin the proxy to the node that already receives the public IP traffic.
   nodeSelector: {}
   tolerations: []
   affinity: {}
@@ -42,6 +45,7 @@ externalTcpProxy:
     enabled: false
     type: ClusterIP
   expose:
+    # Enable only the database ports you actually want HAProxy to publish.
     postgresql: true
     mysql: true
     mongodb: true
@@ -214,9 +218,9 @@ vault:
 # POSTGRESQL — CloudNativePG Operator
 # =============================================================================
 postgresql:
-  enabled: true
+  enabled: false
   operator:
-    enabled: true
+    enabled: false
   externalAccess:
     enabled: false
     # If serviceType is not set and externalIP/externalIPs are provided, the
@@ -311,6 +315,14 @@ mongodb:
     enabled: false
   externalAccess:
     enabled: false
+    # For external replica set clients, publish one public hostname and map
+    # each MongoDB member to a stable external port on its own public hostname.
+    # When replicaSetHorizons.enabled=true, provide one hostname per member in
+    # publicHostnames, matching cluster.instances.
+    replicaSetHorizons:
+      enabled: false
+      basePort: 27017
+      serviceType: ClusterIP
     publicHostnames: []
   tls:
     enabled: true
@@ -328,6 +340,43 @@ mongodb:
     crVersion: "1.22.0"
     instances: 3
     image: percona/percona-server-mongodb:7.0.30-16
+    configuration: |
+      net:
+        tls:
+          allowConnectionsWithoutCertificates: true
+    env:
+      - name: PATH
+        value: /opt/percona:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    sidecars:
+      - name: mongo-compat
+        image: busybox:1.36
+        imagePullPolicy: IfNotPresent
+        command:
+          - /bin/sh
+          - -c
+          - |
+            cat >/opt/percona/mongo <<'EOW'
+            #!/bin/sh
+            exec /usr/bin/mongosh "$@"
+            EOW
+            chmod +x /opt/percona/mongo
+            sleep infinity
+        volumeMounts:
+          - name: bin
+            mountPath: /opt/percona
+    probes:
+      # MongoDB replica set bootstrap and user creation can take several
+      # minutes on Longhorn. The operator defaults are too aggressive and can
+      # push the pods into a restart loop before initialization settles.
+      livenessInitialDelaySeconds: 300
+      livenessTimeoutSeconds: 30
+      livenessPeriodSeconds: 30
+      livenessFailureThreshold: 10
+      livenessStartupDelaySeconds: 7200
+      readinessInitialDelaySeconds: 60
+      readinessTimeoutSeconds: 10
+      readinessPeriodSeconds: 10
+      readinessFailureThreshold: 30
     resources:
       requests:
         cpu: "250m"
@@ -376,7 +425,9 @@ mysql:
         group: cert-manager.io
 
   haproxy:
-    size: 1
+    # The Percona operator enforces at least two HAProxy replicas as a safe
+    # default. Match that here to avoid endless reconciliation churn.
+    size: 2
     readinessDelaySeconds: 15
     readinessTimeoutSeconds: 5
     livenessDelaySeconds: 60
@@ -385,6 +436,14 @@ mysql:
   cluster:
     instances: 3
     image: percona/percona-xtradb-cluster:8.0
+    probes:
+      # Longhorn-backed initial bootstrap can take several minutes. Give the
+      # first PXC node enough time to finish initializing before kubelet
+      # liveness checks kill it and force a full restart.
+      readinessDelaySeconds: 60
+      readinessTimeoutSeconds: 15
+      livenessDelaySeconds: 1200
+      livenessTimeoutSeconds: 15
     resources:
       requests:
         cpu: "500m"
@@ -459,7 +518,7 @@ cassandra:
   tls:
     enabled: false
     clientEncryption: true
-    requireClientAuth: true
+    requireClientAuth: false
     internodeEncryption: all
     createSecrets: false
     serverSecretName: ""

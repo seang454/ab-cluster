@@ -1,3 +1,9 @@
+{{- $ext := .Values.externalAccess | default dict -}}
+{{- $horizons := get $ext "replicaSetHorizons" | default dict -}}
+{{- $publicHosts := $ext.publicHostnames | default list -}}
+{{- $instances := int .Values.cluster.instances -}}
+{{- $basePort := int ($horizons.basePort | default 27017) -}}
+{{- $horizonsEnabled := and ($ext.enabled | default false) ($horizons.enabled | default false) (eq (len $publicHosts) $instances) -}}
 apiVersion: psmdb.percona.com/v1
 kind: PerconaServerMongoDB
 metadata:
@@ -22,7 +28,42 @@ spec:
 
   replsets:
   - name: rs0
-    size: {{ .Values.cluster.instances }}
+    size: {{ $instances }}
+    {{- with .Values.cluster.env }}
+    env:
+      {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- with .Values.cluster.configuration }}
+    configuration: |
+      {{- . | nindent 6 }}
+    {{- end }}
+    {{- with .Values.cluster.sidecars }}
+    sidecars:
+      {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- if $horizonsEnabled }}
+    expose:
+      enabled: true
+      type: {{ $horizons.serviceType | default "ClusterIP" }}
+    splitHorizons:
+      {{- range $i, $_ := until $instances }}
+      {{ include "mongodb.fullname" $ }}-rs0-{{ $i }}:
+        external: {{ printf "%s:%d" (index $publicHosts $i) (add $basePort $i) | quote }}
+      {{- end }}
+    {{- end }}
+    {{- with .Values.cluster.probes }}
+    livenessProbe:
+      initialDelaySeconds: {{ .livenessInitialDelaySeconds | default 300 }}
+      timeoutSeconds: {{ .livenessTimeoutSeconds | default 30 }}
+      periodSeconds: {{ .livenessPeriodSeconds | default 30 }}
+      failureThreshold: {{ .livenessFailureThreshold | default 10 }}
+      startupDelaySeconds: {{ .livenessStartupDelaySeconds | default 7200 }}
+    readinessProbe:
+      initialDelaySeconds: {{ .readinessInitialDelaySeconds | default 60 }}
+      timeoutSeconds: {{ .readinessTimeoutSeconds | default 10 }}
+      periodSeconds: {{ .readinessPeriodSeconds | default 10 }}
+      failureThreshold: {{ .readinessFailureThreshold | default 30 }}
+    {{- end }}
 
     affinity:
       antiAffinityTopologyKey: kubernetes.io/hostname

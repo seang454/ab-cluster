@@ -2,6 +2,7 @@
 {{- $cm := $tls.certManager | default dict -}}
 {{- $generateCA := get $cm "generateCA" | default true -}}
 {{- $ext := .Values.externalAccess | default dict -}}
+{{- $instances := int (.Values.cluster.instances | default 3) -}}
 {{- if and $tls.enabled (eq ($tls.mode | default "certManager") "certManager") }}
 {{- if $generateCA }}
 apiVersion: cert-manager.io/v1
@@ -55,6 +56,12 @@ spec:
   - {{ include "mongodb.fullname" . }}-rs0.{{ .Release.Namespace }}
   - {{ include "mongodb.fullname" . }}-rs0.{{ .Release.Namespace }}.svc
   - {{ include "mongodb.fullname" . }}-rs0.{{ .Release.Namespace }}.svc.cluster.local
+  {{- range $i, $_ := until $instances }}
+  - {{ include "mongodb.fullname" $ }}-rs0-{{ $i }}
+  - {{ include "mongodb.fullname" $ }}-rs0-{{ $i }}.{{ $.Release.Namespace }}
+  - {{ include "mongodb.fullname" $ }}-rs0-{{ $i }}.{{ $.Release.Namespace }}.svc
+  - {{ include "mongodb.fullname" $ }}-rs0-{{ $i }}.{{ $.Release.Namespace }}.svc.cluster.local
+  {{- end }}
   {{- range ($ext.publicHostnames | default list) }}
   - {{ . }}
   {{- end }}

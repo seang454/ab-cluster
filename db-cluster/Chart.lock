@@ -13,7 +13,7 @@ dependencies:
   version: 0.21.0
 - name: psmdb-operator
   repository: https://percona.github.io/percona-helm-charts/
-  version: 1.15.0
+  version: 1.22.0
 - name: pxc-operator
   repository: https://percona.github.io/percona-helm-charts/
   version: 1.14.0
@@ -38,5 +38,5 @@ dependencies:
 - name: cassandra
   repository: file://charts/cassandra
   version: 1.0.0
-digest: sha256:4daaadb43aae3f20b255aa161c86af8ca7435bca918e52e1a2dd35f306cca92c
-generated: "2026-03-26T07:26:37.645494887Z"
+digest: sha256:f753e4e0b80a259fe4016919baf2c5a9cc67d5e9b9fd60d6e1a4d8d9029081de
+generated: "2026-03-29T15:58:28.935733725Z"

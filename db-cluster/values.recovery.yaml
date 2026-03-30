@@ -1,0 +1,72 @@
+externalTcpProxy:
+  enabled: true
+  hostNetwork: true
+  nodeSelector:
+    kubernetes.io/hostname: worker01
+  expose:
+    postgresql: false
+    mysql: true
+    mongodb: true
+    redis: false
+    cassandra: false
+
+cloudflare:
+  enabled: true
+  zoneName: seang.shop
+  externalIP: 35.194.146.154
+  proxied: false
+  apiTokenExistingSecret: cloudflare-api-token
+
+mongodb:
+  enabled: true
+  operator:
+    enabled: true
+  externalAccess:
+    enabled: true
+    replicaSetHorizons:
+      enabled: true
+      basePort: 27017
+      serviceType: ClusterIP
+    publicHostnames:
+      - mongo-db-0.seang.shop
+      - mongo-db-1.seang.shop
+      - mongo-db-2.seang.shop
+  cluster:
+    configuration: |
+      net:
+        tls:
+          allowConnectionsWithoutCertificates: true
+    env:
+      - name: PATH
+        value: /opt/percona:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    sidecars:
+      - name: mongo-compat
+        image: busybox:1.36
+        command:
+          - /bin/sh
+          - -c
+          - |
+            cat >/opt/percona/mongo <<'EOF'
+            #!/bin/sh
+            exec /usr/bin/mongosh "$@"
+            EOF
+            chmod +x /opt/percona/mongo
+            sleep infinity
+        volumeMounts:
+          - name: bin
+            mountPath: /opt/percona
+
+mysql:
+  enabled: true
+  operator:
+    enabled: true
+  externalAccess:
+    enabled: false
+    publicHostnames:
+      - mysql-db.seang.shop
+  haproxy:
+    size: 2
+    readinessDelaySeconds: 30
+    readinessTimeoutSeconds: 10
+    livenessDelaySeconds: 120
+    livenessTimeoutSeconds: 10

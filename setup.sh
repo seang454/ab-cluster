@@ -46,10 +46,164 @@ retry() {
 }
 
 values_args() {
-    if [ -n "$VALUES_FILE" ]; then
+    local DEFAULT_VALUES="$CHART_DIR/values.yaml"
+    [ -f "$DEFAULT_VALUES" ] || die "Default values file not found: $DEFAULT_VALUES"
+    printf -- '-f\n%s\n' "$DEFAULT_VALUES"
+
+    if [ -n "$VALUES_FILE" ] && [ "$VALUES_FILE" != "$DEFAULT_VALUES" ]; then
         [ -f "$VALUES_FILE" ] || die "VALUES_FILE not found: $VALUES_FILE"
         printf -- '-f\n%s\n' "$VALUES_FILE"
     fi
+}
+
+validate_profile_values() {
+    local DEFAULT_VALUES="$CHART_DIR/values.yaml"
+    [ -f "$DEFAULT_VALUES" ] || die "Default values file not found: $DEFAULT_VALUES"
+    if [ -n "$VALUES_FILE" ] && [ "$VALUES_FILE" != "$DEFAULT_VALUES" ]; then
+        [ -f "$VALUES_FILE" ] || die "VALUES_FILE not found: $VALUES_FILE"
+    fi
+}
+
+profile_values_files() {
+    local DEFAULT_VALUES="$CHART_DIR/values.yaml"
+    printf '%s\n' "$DEFAULT_VALUES"
+
+    if [ -n "$VALUES_FILE" ] && [ "$VALUES_FILE" != "$DEFAULT_VALUES" ]; then
+        printf '%s\n' "$VALUES_FILE"
+    fi
+}
+
+profile_label() {
+    local DEFAULT_VALUES="$CHART_DIR/values.yaml"
+    if [ -n "$VALUES_FILE" ] && [ "$VALUES_FILE" != "$DEFAULT_VALUES" ]; then
+        printf '%s + %s' "$DEFAULT_VALUES" "$VALUES_FILE"
+    else
+        printf '%s' "$DEFAULT_VALUES"
+    fi
+}
+
+cloudflare_job_config() {
+    local HELM_VALUES_ARGS=()
+    mapfile -t HELM_VALUES_ARGS < <(values_args)
+
+    helm template "$RELEASE" "$CHART_DIR" "${HELM_VALUES_ARGS[@]}" 2>/dev/null | \
+        RELEASE="$RELEASE" python3 - <<'PY'
+import json
+import os
+import re
+import sys
+
+text = sys.stdin.read()
+release = os.environ["RELEASE"]
+job_name = re.escape(f"{release}-cloudflare-dns")
+
+job_match = re.search(
+    rf"kind:\s*Job\s+metadata:\s+name:\s*{job_name}\b(.*?)(?:\n---\n|\Z)",
+    text,
+    re.S,
+)
+if not job_match:
+    raise SystemExit(0)
+
+job = job_match.group(1)
+
+def capture(pattern):
+    match = re.search(pattern, job, re.S)
+    return match.group(1).strip() if match else ""
+
+def strip_quotes(value):
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        return value[1:-1]
+    return value
+
+token_secret = capture(r"- name:\s*CLOUDFLARE_API_TOKEN.*?secretKeyRef:\s*name:\s*([^\s]+)")
+zone_name = strip_quotes(capture(r"- name:\s*CLOUDFLARE_ZONE_NAME\s+value:\s*([^\n]+)"))
+records_json = strip_quotes(capture(r"- name:\s*DNS_RECORDS_JSON\s+value:\s*([^\n]+)"))
+
+try:
+    records = json.loads(records_json) if records_json else []
+except json.JSONDecodeError:
+    records = []
+
+print(json.dumps({
+    "token_secret": token_secret,
+    "zone_name": zone_name,
+    "records": records,
+}))
+PY
+}
+
+delete_cloudflare_dns_records() {
+    local cfg token_secret zone_name token
+    cfg="$(cloudflare_job_config)"
+    [ -z "$cfg" ] && { info "No Cloudflare DNS job rendered for current values; skipping DNS cleanup"; return 0; }
+
+    token_secret="$(printf '%s' "$cfg" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("token_secret",""))')"
+    zone_name="$(printf '%s' "$cfg" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("zone_name",""))')"
+
+    token="${CLOUDFLARE_API_TOKEN:-}"
+    if [ -z "$token" ] && [ -n "$token_secret" ]; then
+        token="$(kubectl get secret "$token_secret" -n "$NAMESPACE" -o jsonpath='{.data.token}' 2>/dev/null | base64 -d || true)"
+    fi
+
+    if [ -z "$token" ]; then
+        info "Cloudflare API token not available; skipping DNS record deletion"
+        return 0
+    fi
+
+    CLOUDFLARE_CFG_JSON="$cfg" CLOUDFLARE_API_TOKEN="$token" python3 - <<'PY'
+import json
+import os
+import ssl
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+
+cfg = json.loads(os.environ["CLOUDFLARE_CFG_JSON"])
+token = os.environ["CLOUDFLARE_API_TOKEN"].strip()
+zone_name = cfg.get("zone_name", "").strip()
+records = [r.strip() for r in cfg.get("records", []) if str(r).strip()]
+
+if not zone_name or not records:
+    raise SystemExit(0)
+
+base = "https://api.cloudflare.com/client/v4"
+headers = {
+    "Authorization": f"Bearer {token}",
+    "Content-Type": "application/json",
+}
+
+def request(method, path):
+    req = urllib.request.Request(base + path, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, context=ssl.create_default_context()) as resp:
+            body = resp.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise SystemExit(f"Cloudflare API error {exc.code}: {body}")
+    data = json.loads(body)
+    if not data.get("success"):
+        raise SystemExit(f"Cloudflare API request failed: {body}")
+    return data["result"]
+
+zones = request("GET", f"/zones?name={urllib.parse.quote(zone_name, safe='')}")
+if not zones:
+    raise SystemExit(f"Cloudflare zone not found: {zone_name}")
+zone_id = zones[0]["id"]
+
+for record_name in records:
+    existing = request(
+        "GET",
+        f"/zones/{zone_id}/dns_records?type=A&name={urllib.parse.quote(record_name, safe='')}",
+    )
+    if not existing:
+        print(f"DNS record not found, skipping: {record_name}")
+        continue
+    for rec in existing:
+        request("DELETE", f"/zones/{zone_id}/dns_records/{rec['id']}")
+        print(f"Deleted DNS record {rec['name']}")
+PY
 }
 
 schedulable_worker_report() {
@@ -132,16 +286,14 @@ PY
 }
 
 required_profile_resources() {
-    local PROFILE_FILE
-    PROFILE_FILE="${VALUES_FILE:-$CHART_DIR/values.yaml}"
-    [ -f "$PROFILE_FILE" ] || die "Values file not found: $PROFILE_FILE"
+    local PROFILE_FILES=()
+    validate_profile_values
+    mapfile -t PROFILE_FILES < <(profile_values_files)
 
-    python3 - "$PROFILE_FILE" <<'PY'
+    python3 - "${PROFILE_FILES[@]}" <<'PY'
 import re
 import sys
 
-path = sys.argv[1]
-lines = open(path, "r", encoding="utf-8").read().splitlines()
 dbs = ["postgresql", "mongodb", "mysql", "redis", "cassandra"]
 data = {db: {"enabled": False, "instances": 0, "cpu_m": 0, "mem_mib": 0} for db in dbs}
 
@@ -176,71 +328,78 @@ def mem_to_mib(value: str) -> int:
             return int(float(value[:-len(suffix)]) * factor)
     return int(float(value) / (1024 * 1024))
 
-for raw in lines:
-    if not raw.strip() or raw.lstrip().startswith("#"):
-        continue
+for path in sys.argv[1:]:
+    lines = open(path, "r", encoding="utf-8").read().splitlines()
+    section = None
+    in_cluster = False
+    in_resources = False
+    in_requests = False
 
-    indent = len(raw) - len(raw.lstrip(" "))
-    line = raw.strip()
+    for raw in lines:
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
 
-    m = re.match(r"([A-Za-z0-9_]+):\s*(.*)$", line)
-    if indent == 0 and m and m.group(1) in dbs:
-        section = m.group(1)
-        in_cluster = False
-        in_resources = False
-        in_requests = False
-        continue
+        indent = len(raw) - len(raw.lstrip(" "))
+        line = raw.strip()
 
-    if section is None:
-        continue
+        m = re.match(r"([A-Za-z0-9_]+):\s*(.*)$", line)
+        if indent == 0 and m and m.group(1) in dbs:
+            section = m.group(1)
+            in_cluster = False
+            in_resources = False
+            in_requests = False
+            continue
 
-    if indent <= 1:
-        in_cluster = False
-        in_resources = False
-        in_requests = False
+        if section is None:
+            continue
 
-    if indent == 2 and line.startswith("enabled:"):
-        data[section]["enabled"] = line.split(":", 1)[1].strip().lower() == "true"
-        continue
+        if indent <= 1:
+            in_cluster = False
+            in_resources = False
+            in_requests = False
 
-    if indent == 2 and line.startswith("cluster:"):
-        in_cluster = True
-        in_resources = False
-        in_requests = False
-        continue
+        if indent == 2 and line.startswith("enabled:"):
+            data[section]["enabled"] = line.split(":", 1)[1].strip().lower() == "true"
+            continue
 
-    if indent <= 2 and not line.startswith("cluster:"):
-        in_cluster = False
-        in_resources = False
-        in_requests = False
+        if indent == 2 and line.startswith("cluster:"):
+            in_cluster = True
+            in_resources = False
+            in_requests = False
+            continue
 
-    if not in_cluster:
-        continue
+        if indent <= 2 and not line.startswith("cluster:"):
+            in_cluster = False
+            in_resources = False
+            in_requests = False
 
-    if indent == 4 and line.startswith("instances:"):
-        data[section]["instances"] = int(line.split(":", 1)[1].strip().strip('"').strip("'"))
-        continue
+        if not in_cluster:
+            continue
 
-    if indent == 4 and line.startswith("resources:"):
-        in_resources = True
-        in_requests = False
-        continue
+        if indent == 4 and line.startswith("instances:"):
+            data[section]["instances"] = int(line.split(":", 1)[1].strip().strip('"').strip("'"))
+            continue
 
-    if indent <= 4 and not line.startswith("resources:"):
-        in_resources = False
-        in_requests = False
+        if indent == 4 and line.startswith("resources:"):
+            in_resources = True
+            in_requests = False
+            continue
 
-    if in_resources and indent == 6 and line.startswith("requests:"):
-        in_requests = True
-        continue
+        if indent <= 4 and not line.startswith("resources:"):
+            in_resources = False
+            in_requests = False
 
-    if in_resources and indent <= 6 and not line.startswith("requests:"):
-        in_requests = False
+        if in_resources and indent == 6 and line.startswith("requests:"):
+            in_requests = True
+            continue
 
-    if in_requests and indent == 8 and line.startswith("cpu:"):
-        data[section]["cpu_m"] = cpu_to_millis(line.split(":", 1)[1])
-    if in_requests and indent == 8 and line.startswith("memory:"):
-        data[section]["mem_mib"] = mem_to_mib(line.split(":", 1)[1])
+        if in_resources and indent <= 6 and not line.startswith("requests:"):
+            in_requests = False
+
+        if in_requests and indent == 8 and line.startswith("cpu:"):
+            data[section]["cpu_m"] = cpu_to_millis(line.split(":", 1)[1])
+        if in_requests and indent == 8 and line.startswith("memory:"):
+            data[section]["mem_mib"] = mem_to_mib(line.split(":", 1)[1])
 
 total_cpu = 0
 total_mem = 0
@@ -254,21 +413,22 @@ PY
 }
 
 profile_schedulability_report() {
-    local PROFILE_FILE
-    PROFILE_FILE="${VALUES_FILE:-$CHART_DIR/values.yaml}"
-    [ -f "$PROFILE_FILE" ] || die "Values file not found: $PROFILE_FILE"
+    local PROFILE_FILES=()
+    validate_profile_values
+    mapfile -t PROFILE_FILES < <(profile_values_files)
 
     kubectl get nodes -o json > /tmp/setup_nodes_sched.json 2>/dev/null || return 1
     kubectl get pods -A -o json > /tmp/setup_pods_sched.json 2>/dev/null || return 1
 
-    python3 - "$PROFILE_FILE" /tmp/setup_nodes_sched.json /tmp/setup_pods_sched.json <<'PY'
+    python3 - "${PROFILE_FILES[@]}" /tmp/setup_nodes_sched.json /tmp/setup_pods_sched.json <<'PY'
 import json
 import math
 import re
 import sys
 
-profile_path, nodes_path, pods_path = sys.argv[1:4]
-lines = open(profile_path, "r", encoding="utf-8").read().splitlines()
+nodes_path = sys.argv[-2]
+pods_path = sys.argv[-1]
+profile_paths = sys.argv[1:-2]
 nodes = json.load(open(nodes_path, "r", encoding="utf-8"))
 pods = json.load(open(pods_path, "r", encoding="utf-8"))
 
@@ -318,41 +478,46 @@ def mem_to_mib(value):
             return int(math.ceil(float(value[:-len(suffix)]) * factor))
     return int(math.ceil(float(value) / (1024 * 1024)))
 
-for raw in lines:
-    if not raw.strip() or raw.lstrip().startswith("#"):
-        continue
-    indent = len(raw) - len(raw.lstrip(" "))
-    level = indent // 2
-    line = raw.strip()
-    m = re.match(r"([A-Za-z0-9_]+):\s*(.*)$", line)
-    if not m:
-        continue
-    key, value = m.group(1), m.group(2)
-    path = path[:level]
-    path.append(key)
+for profile_path in profile_paths:
+    lines = open(profile_path, "r", encoding="utf-8").read().splitlines()
+    section = None
+    path = []
 
-    if level == 0 and key in dbs:
-        section = key
-    if section != path[0]:
-        continue
+    for raw in lines:
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        indent = len(raw) - len(raw.lstrip(" "))
+        level = indent // 2
+        line = raw.strip()
+        m = re.match(r"([A-Za-z0-9_]+):\s*(.*)$", line)
+        if not m:
+            continue
+        key, value = m.group(1), m.group(2)
+        path = path[:level]
+        path.append(key)
 
-    joined = ".".join(path)
-    if joined == f"{section}.enabled":
-        data[section]["enabled"] = value.strip().lower() == "true"
-    elif joined == f"{section}.cluster.instances":
-        data[section]["instances"] = int(value.strip().strip('"').strip("'"))
-    elif joined == f"{section}.cluster.resources.requests.cpu":
-        data[section]["cpu_m"] = cpu_to_millis(value)
-    elif joined == f"{section}.cluster.resources.requests.memory":
-        data[section]["mem_mib"] = mem_to_mib(value)
-    elif joined == f"{section}.cluster.configBuilderResources.requests.cpu":
-        data[section]["config_builder_cpu_m"] = cpu_to_millis(value)
-    elif joined == f"{section}.cluster.configBuilderResources.requests.memory":
-        data[section]["config_builder_mem_mib"] = mem_to_mib(value)
-    elif joined == f"{section}.cluster.systemLoggerResources.requests.cpu":
-        data[section]["system_logger_cpu_m"] = cpu_to_millis(value)
-    elif joined == f"{section}.cluster.systemLoggerResources.requests.memory":
-        data[section]["system_logger_mem_mib"] = mem_to_mib(value)
+        if level == 0 and key in dbs:
+            section = key
+        if section != path[0]:
+            continue
+
+        joined = ".".join(path)
+        if joined == f"{section}.enabled":
+            data[section]["enabled"] = value.strip().lower() == "true"
+        elif joined == f"{section}.cluster.instances":
+            data[section]["instances"] = int(value.strip().strip('"').strip("'"))
+        elif joined == f"{section}.cluster.resources.requests.cpu":
+            data[section]["cpu_m"] = cpu_to_millis(value)
+        elif joined == f"{section}.cluster.resources.requests.memory":
+            data[section]["mem_mib"] = mem_to_mib(value)
+        elif joined == f"{section}.cluster.configBuilderResources.requests.cpu":
+            data[section]["config_builder_cpu_m"] = cpu_to_millis(value)
+        elif joined == f"{section}.cluster.configBuilderResources.requests.memory":
+            data[section]["config_builder_mem_mib"] = mem_to_mib(value)
+        elif joined == f"{section}.cluster.systemLoggerResources.requests.cpu":
+            data[section]["system_logger_cpu_m"] = cpu_to_millis(value)
+        elif joined == f"{section}.cluster.systemLoggerResources.requests.memory":
+            data[section]["system_logger_mem_mib"] = mem_to_mib(value)
 
 eligible = {}
 for item in nodes["items"]:
@@ -419,35 +584,35 @@ PY
 }
 
 enabled_databases() {
-    local PROFILE_FILE
-    PROFILE_FILE="${VALUES_FILE:-$CHART_DIR/values.yaml}"
-    [ -f "$PROFILE_FILE" ] || die "Values file not found: $PROFILE_FILE"
+    local PROFILE_FILES=()
+    validate_profile_values
+    mapfile -t PROFILE_FILES < <(profile_values_files)
 
-    python3 - "$PROFILE_FILE" <<'PY'
+    python3 - "${PROFILE_FILES[@]}" <<'PY'
 import re
 import sys
 
-path = sys.argv[1]
-lines = open(path, "r", encoding="utf-8").read().splitlines()
 dbs = ["postgresql", "mongodb", "mysql", "redis", "cassandra"]
-section = None
-enabled = []
+enabled = {db: False for db in dbs}
 
-for raw in lines:
-    if not raw.strip() or raw.lstrip().startswith("#"):
-        continue
-    indent = len(raw) - len(raw.lstrip(" "))
-    line = raw.strip()
-    m = re.match(r"([A-Za-z0-9_]+):\s*(.*)$", line)
-    if indent == 0 and m and m.group(1) in dbs:
-        section = m.group(1)
-        continue
-    if section and indent == 2 and line.startswith("enabled:"):
-        if line.split(":", 1)[1].strip().lower() == "true":
-            enabled.append(section)
-        section = None
+for path in sys.argv[1:]:
+    lines = open(path, "r", encoding="utf-8").read().splitlines()
+    section = None
 
-print(" ".join(enabled))
+    for raw in lines:
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        indent = len(raw) - len(raw.lstrip(" "))
+        line = raw.strip()
+        m = re.match(r"([A-Za-z0-9_]+):\s*(.*)$", line)
+        if indent == 0 and m and m.group(1) in dbs:
+            section = m.group(1)
+            continue
+        if section and indent == 2 and line.startswith("enabled:"):
+            enabled[section] = line.split(":", 1)[1].strip().lower() == "true"
+            section = None
+
+print(" ".join(db for db in dbs if enabled[db]))
 PY
 }
 
@@ -487,7 +652,7 @@ preflight() {
     local PROFILE_LABEL REQUIRED_CPU REQUIRED_MEM
     local TOTAL_ALLOC_CPU TOTAL_ALLOC_MEM TOTAL_REQ_CPU TOTAL_REQ_MEM TOTAL_AVAIL_CPU TOTAL_AVAIL_MEM
     local RESOURCES_LINE SCHED_ISSUES
-    PROFILE_LABEL="${VALUES_FILE:-$CHART_DIR/values.yaml}"
+    PROFILE_LABEL="$(profile_label)"
     IFS=$'\t' read -r REQUIRED_CPU REQUIRED_MEM <<<"$(required_profile_resources)"
     RESOURCES_LINE="$(schedulable_worker_report)" || die "Failed to inspect schedulable node resources"
 
@@ -1127,6 +1292,9 @@ deploy() {
         --set "vault.postgresql.appPassword=$PG_PASS" \
         --set "vault.mongodb.clusterAdminPassword=$MONGO_PASS" \
         --set "vault.mongodb.userAdminPassword=$MONGO_PASS" \
+        --set "vault.mongodb.clusterMonitorPassword=$MONGO_PASS" \
+        --set "vault.mongodb.databaseAdminPassword=$MONGO_PASS" \
+        --set "vault.mongodb.backupPassword=$MONGO_PASS" \
         --set "vault.mongodb.replicationKey=$MONGO_PASS" \
         --set "vault.mysql.rootPassword=$MYSQL_PASS" \
         --set "vault.mysql.appPassword=$MYSQL_PASS" \
@@ -1365,6 +1533,9 @@ upgrade() {
         --set "vault.postgresql.appPassword=$PG_PASS" \
         --set "vault.mongodb.clusterAdminPassword=$MONGO_PASS" \
         --set "vault.mongodb.userAdminPassword=$MONGO_PASS" \
+        --set "vault.mongodb.clusterMonitorPassword=$MONGO_PASS" \
+        --set "vault.mongodb.databaseAdminPassword=$MONGO_PASS" \
+        --set "vault.mongodb.backupPassword=$MONGO_PASS" \
         --set "vault.mongodb.replicationKey=$MONGO_PASS" \
         --set "vault.mysql.rootPassword=$MYSQL_PASS" \
         --set "vault.mysql.appPassword=$MYSQL_PASS" \
@@ -1514,13 +1685,67 @@ teardown() {
     ok "Teardown complete — run './setup.sh' to start fresh"
 }
 
+teardownremain() {
+    echo ""
+    echo "==> WARNING: This will delete remaining cluster-scoped resources,"
+    echo "    generated local setup files, and Cloudflare DNS records managed"
+    echo "    by the current values profile in 5 seconds"
+    echo "    Ctrl+C to cancel..."
+    sleep 5
+
+    log "[1/5] Deleting Cloudflare DNS records for the current values profile..."
+    delete_cloudflare_dns_records || true
+    ok "Cloudflare DNS cleanup attempted"
+
+    log "[2/5] Removing leftover operator Helm releases and namespaces..."
+    helm uninstall external-secrets -n external-secrets 2>/dev/null || true
+    helm uninstall cnpg -n cnpg-system 2>/dev/null || true
+    helm uninstall psmdb-operator -n "$NAMESPACE" 2>/dev/null || true
+    helm uninstall pxc-operator -n "$NAMESPACE" 2>/dev/null || true
+    helm uninstall redis-operator -n "$NAMESPACE" 2>/dev/null || true
+    helm uninstall k8ssandra-operator -n "$NAMESPACE" 2>/dev/null || true
+    for ns in external-secrets cnpg-system; do
+        kubectl delete namespace "$ns" --force --grace-period=0 --wait=false --ignore-not-found --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null || true
+    done
+    ok "Operator cleanup attempted"
+
+    log "[3/5] Deleting leftover cluster-scoped CRDs, RBAC, stores, and webhooks..."
+    kubectl delete clustersecretstore vault-backend --ignore-not-found --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null || true
+    for obj in $(kubectl get clusterrole,clusterrolebinding,validatingwebhookconfiguration,mutatingwebhookconfiguration --no-headers --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null | awk '{print $1}' | grep -E 'external-secrets|cnpg|percona|psmdb|pxc|redis-operator|k8ssandra|longhorn|ingress-nginx|traefik|vault' || true); do
+        kubectl delete "$obj" --ignore-not-found --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null || true
+    done
+    for crd in $(kubectl get crd --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null | grep -E "longhorn|cnpg|percona|psmdb|pxc|external-secrets|externalsecrets|clustersecretstores|redis\\.opstreelabs|k8ssandra|cassandradatacenters|cassandratasks|clientconfigs" | awk '{print $1}'); do
+        kubectl patch crd "$crd" -p '{"metadata":{"finalizers":[]}}' --type=merge --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null || true
+        kubectl delete crd "$crd" --force --grace-period=0 --wait=false --ignore-not-found --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null || true
+    done
+    ok "Cluster-scoped cleanup attempted"
+
+    log "[4/5] Removing generated local setup files..."
+    rm -f .env vault-init.json vault-main-init.json vault-transit-init.json /tmp/live-psmdb.yaml /tmp/my-db-values.yaml
+    ok "Generated local files removed"
+
+    log "[5/5] Verification..."
+    echo ""
+    echo "  Remaining operator CRDs:"
+    CRDS=$(kubectl get crd 2>/dev/null | grep -E "longhorn|cnpg|percona|psmdb|external-secrets|redis\\.opstreelabs|k8ssandra|cassandradatacenters|cassandratasks|clientconfigs" || true)
+    [ -n "$CRDS" ] && echo "$CRDS" || echo "    none ✓"
+
+    echo ""
+    echo "  Remaining operator namespaces:"
+    NS_LEFT=$(kubectl get namespace --no-headers 2>/dev/null | grep -E "^external-secrets|^cnpg-system" || true)
+    [ -n "$NS_LEFT" ] && echo "$NS_LEFT" || echo "    none ✓"
+
+    echo ""
+    ok "Remaining cleanup complete"
+}
+
 
 # =============================================================================
 # ENTRYPOINT
 # =============================================================================
 usage() {
     echo "Usage: ./setup.sh [command]"
-    echo "Env:    VALUES_FILE=./db-cluster/values.small-cluster.yaml ./setup.sh"
+    echo "Env:    VALUES_FILE=./db-cluster/values.cloudflare-example.yaml ./setup.sh"
     echo ""
     echo "1. setup"
     echo "   Run the normal full install using db-cluster/values.yaml."
@@ -1635,6 +1860,12 @@ usage() {
     echo "    Delete the entire platform. Destructive."
     echo "    Why use it: reset the cluster when you want a clean reinstall."
     echo ""
+    echo "26. teardownremain"
+    echo "    Delete remaining cluster-scoped leftovers, generated local setup files,"
+    echo "    and Cloudflare DNS records for the current values profile. Destructive."
+    echo "    Why use it: use after teardown when you want a deeper reset before a"
+    echo "    fresh reinstall."
+    echo ""
     echo "Ingress note:"
     echo "   This project uses standard Kubernetes Ingress for web UIs."
     echo "   setup installs ingress-nginx automatically unless your cluster"
@@ -1645,7 +1876,7 @@ usage() {
 
 CMD="${1:-setup}"; shift 2>/dev/null || true
 case "$CMD" in
-    setup|small_setup|teardown|status|clusters|vault_status|upgrade|sync|usage|\
+    setup|small_setup|teardown|teardownremain|status|clusters|vault_status|upgrade|sync|usage|\
     preflight|repos|ingress_nginx|longhorn|deps|vault_transit|vault_install|vault_init|\
     install_operators|deploy|operator_plugins|vault_list|vault_get|rotate|cloudflare_secret|\
     pg|mongo|redis|mysql|cassandra|vault_ui|longhorn_ui)

@@ -17,6 +17,14 @@ spec:
   pxc:
     size: {{ .Values.cluster.instances }}
     image: {{ .Values.cluster.image }}
+    {{- with .Values.cluster.probes }}
+    readinessDelaySec: {{ .readinessDelaySeconds | default 60 }}
+    readinessProbes:
+      timeoutSeconds: {{ .readinessTimeoutSeconds | default 15 }}
+    livenessDelaySec: {{ .livenessDelaySeconds | default 1200 }}
+    livenessProbes:
+      timeoutSeconds: {{ .livenessTimeoutSeconds | default 15 }}
+    {{- end }}
 
     affinity:
       antiAffinityTopologyKey: kubernetes.io/hostname

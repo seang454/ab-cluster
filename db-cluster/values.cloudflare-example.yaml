@@ -1,9 +1,11 @@
 # Example overlay for exposing web UIs over HTTPS through a standard
-# Kubernetes ingress controller and PostgreSQL externally on 5432 with TLS.
+# Kubernetes ingress controller and selected databases externally through the
+# shared HAProxy TCP proxy.
 #
 # Cloudflare requirement:
 # - Use DNS-only records for the UI hostnames below.
-# - `postgres-db.seang.shop` also points to the same external IP.
+# - `mysql-db.seang.shop` and `mongo-db.seang.shop` also point to the same
+#   external IP.
 
 cloudflare:
   enabled: true
@@ -25,9 +27,9 @@ externalTcpProxy:
   nodeSelector:
     kubernetes.io/hostname: worker01
   expose:
-    postgresql: true
-    mysql: false
-    mongodb: false
+    postgresql: false
+    mysql: true
+    mongodb: true
     redis: false
     cassandra: false
 
@@ -53,7 +55,7 @@ vault:
       clusterIssuer: letsencrypt-prod
 
 postgresql:
-  enabled: true
+  enabled: false
   externalAccess:
     enabled: false
     publicHostnames:
@@ -66,16 +68,47 @@ mysql:
   enabled: false
   externalAccess:
     enabled: false
-    publicHostnames: []
+    publicHostnames:
+      - mysql-db.seang.shop
+  haproxy:
+    size: 2
+    readinessDelaySeconds: 30
+    readinessTimeoutSeconds: 10
+    livenessDelaySeconds: 120
+    livenessTimeoutSeconds: 10
+  cluster:
+    probes:
+      readinessDelaySeconds: 60
+      readinessTimeoutSeconds: 15
+      livenessDelaySeconds: 1200
+      livenessTimeoutSeconds: 15
   tls:
     enabled: true
     mode: certManager
 
 mongodb:
-  enabled: false
+  enabled: true
   externalAccess:
-    enabled: false
-    publicHostnames: []
+    enabled: true
+    replicaSetHorizons:
+      enabled: true
+      basePort: 27017
+      serviceType: ClusterIP
+    publicHostnames:
+      - mongo-db-0.seang.shop
+      - mongo-db-1.seang.shop
+      - mongo-db-2.seang.shop
+  cluster:
+    probes:
+      livenessInitialDelaySeconds: 300
+      livenessTimeoutSeconds: 30
+      livenessPeriodSeconds: 30
+      livenessFailureThreshold: 10
+      livenessStartupDelaySeconds: 7200
+      readinessInitialDelaySeconds: 60
+      readinessTimeoutSeconds: 10
+      readinessPeriodSeconds: 10
+      readinessFailureThreshold: 30
   tls:
     enabled: true
     mode: certManager

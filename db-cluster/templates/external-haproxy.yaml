@@ -1,7 +1,14 @@
 {{- $proxy := .Values.externalTcpProxy | default dict -}}
 {{- $expose := $proxy.expose | default dict -}}
 {{- $ports := $proxy.ports | default dict -}}
+{{- $mongoExt := .Values.mongodb.externalAccess | default dict -}}
+{{- $mongoHorizons := get $mongoExt "replicaSetHorizons" | default dict -}}
+{{- $mongoPublicHosts := $mongoExt.publicHostnames | default list -}}
+{{- $mongoHorizonsEnabled := and .Values.mongodb.enabled ($expose.mongodb | default true) ($mongoExt.enabled | default false) ($mongoHorizons.enabled | default false) (gt (len $mongoPublicHosts) 0) -}}
 {{- if $proxy.enabled }}
+# Shared external TCP proxy for database traffic.
+# This object is separate from the database operators and only forwards raw TCP
+# from the public node entrypoint to internal Kubernetes Services.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -20,49 +27,72 @@ data:
       timeout client {{ $proxy.timeouts.client | default "1m" }}
       timeout server {{ $proxy.timeouts.server | default "1m" }}
 
+    # Use Kubernetes DNS from inside the pod and allow startup before every
+    # backend name resolves. This prevents CrashLoopBackOff during cluster
+    # bootstrap when headless services or endpoints are not ready yet.
+    resolvers kube_dns
+      parse-resolv-conf
+      accepted_payload_size 8192
+      hold valid 10s
+
     {{- if and .Values.postgresql.enabled ($expose.postgresql | default true) }}
+    # Public PostgreSQL listener -> internal CNPG read-write service.
     frontend postgresql_frontend
       bind *:{{ $ports.postgresql | default 5432 }}
       default_backend postgresql_backend
 
     backend postgresql_backend
-      server postgresql {{ .Release.Name }}-postgresql-rw.{{ .Release.Namespace }}.svc.cluster.local:5432 check
+      server postgresql {{ .Release.Name }}-postgresql-rw.{{ .Release.Namespace }}.svc.cluster.local:5432 check resolvers kube_dns init-addr none
     {{ end }}
 
     {{- if and .Values.mysql.enabled ($expose.mysql | default true) }}
+    # Public MySQL listener -> internal MySQL HAProxy service managed by PXC.
     frontend mysql_frontend
       bind *:{{ $ports.mysql | default 3306 }}
       default_backend mysql_backend
 
     backend mysql_backend
-      server mysql {{ .Release.Name }}-mysql-haproxy.{{ .Release.Namespace }}.svc.cluster.local:3306 check
+      server mysql {{ .Release.Name }}-mysql-haproxy.{{ .Release.Namespace }}.svc.cluster.local:3306 check resolvers kube_dns init-addr none
     {{ end }}
 
-    {{- if and .Values.mongodb.enabled ($expose.mongodb | default true) }}
+    {{- if $mongoHorizonsEnabled }}
+    {{- range $i, $_ := until (int .Values.mongodb.cluster.instances) }}
+    # Public MongoDB listener for replica-set member {{ $i }}.
+    frontend mongodb_frontend_{{ $i }}
+      bind *:{{ add ($ports.mongodb | default 27017 | int) $i }}
+      default_backend mongodb_backend_{{ $i }}
+
+    backend mongodb_backend_{{ $i }}
+      server mongodb{{ $i }} {{ $.Release.Name }}-mongodb-rs0-{{ $i }}.{{ $.Release.Name }}-mongodb-rs0.{{ $.Release.Namespace }}.svc.cluster.local:27017 check resolvers kube_dns init-addr none
+    {{ end }}
+    {{- else if and .Values.mongodb.enabled ($expose.mongodb | default true) }}
+    # Public MongoDB listener -> internal replica set service.
     frontend mongodb_frontend
       bind *:{{ $ports.mongodb | default 27017 }}
       default_backend mongodb_backend
 
     backend mongodb_backend
-      server mongodb {{ .Release.Name }}-mongodb-rs0.{{ .Release.Namespace }}.svc.cluster.local:27017 check
+      server mongodb {{ .Release.Name }}-mongodb-rs0.{{ .Release.Namespace }}.svc.cluster.local:27017 check resolvers kube_dns init-addr none
     {{ end }}
 
     {{- if and .Values.redis.enabled ($expose.redis | default true) }}
+    # Public Redis listener -> internal Redis leader service.
     frontend redis_frontend
       bind *:{{ $ports.redis | default 6379 }}
       default_backend redis_backend
 
     backend redis_backend
-      server redis {{ .Release.Name }}-redis-leader.{{ .Release.Namespace }}.svc.cluster.local:6379 check
+      server redis {{ .Release.Name }}-redis-leader.{{ .Release.Namespace }}.svc.cluster.local:6379 check resolvers kube_dns init-addr none
     {{ end }}
 
     {{- if and .Values.cassandra.enabled ($expose.cassandra | default true) }}
+    # Public Cassandra listener -> internal Cassandra service.
     frontend cassandra_frontend
       bind *:{{ $ports.cassandra | default 9042 }}
       default_backend cassandra_backend
 
     backend cassandra_backend
-      server cassandra {{ .Release.Name }}-dc1-service.{{ .Release.Namespace }}.svc.cluster.local:9042 check
+      server cassandra {{ .Release.Name }}-dc1-service.{{ .Release.Namespace }}.svc.cluster.local:9042 check resolvers kube_dns init-addr none
     {{ end }}
 ---
 apiVersion: apps/v1
@@ -83,10 +113,14 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name }}
     spec:
       {{- if $proxy.hostNetwork }}
+      # Host networking makes the pod listen on the node's real ports.
+      # This is what allows a public IP already routed to the node to reach
+      # HAProxy on ports like 5432 without using a cloud LoadBalancer.
       hostNetwork: true
       dnsPolicy: {{ $proxy.dnsPolicy | default "ClusterFirstWithHostNet" }}
       {{- end }}
       {{- with $proxy.nodeSelector }}
+      # Pin the proxy to the node that receives your public traffic.
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
@@ -102,6 +136,8 @@ spec:
       - name: haproxy
         image: "{{ $proxy.image.repository | default "haproxy" }}:{{ $proxy.image.tag | default "3.0-alpine" }}"
         imagePullPolicy: {{ $proxy.image.pullPolicy | default "IfNotPresent" }}
+        # Expose only the ports enabled in values. Each one maps to a backend
+        # service defined in haproxy.cfg above.
         ports:
         {{- if and .Values.postgresql.enabled ($expose.postgresql | default true) }}
         - name: postgresql
@@ -113,7 +149,11 @@ spec:
           containerPort: {{ $ports.mysql | default 3306 }}
           protocol: TCP
         {{- end }}
-        {{- if and .Values.mongodb.enabled ($expose.mongodb | default true) }}
+        {{- if $mongoHorizonsEnabled }}
+        - name: mongodb
+          containerPort: {{ $ports.mongodb | default 27017 }}
+          protocol: TCP
+        {{- else if and .Values.mongodb.enabled ($expose.mongodb | default true) }}
         - name: mongodb
           containerPort: {{ $ports.mongodb | default 27017 }}
           protocol: TCP
@@ -165,7 +205,12 @@ spec:
     targetPort: {{ $ports.mysql | default 3306 }}
     protocol: TCP
   {{- end }}
-  {{- if and .Values.mongodb.enabled ($expose.mongodb | default true) }}
+  {{- if $mongoHorizonsEnabled }}
+  - name: mongodb
+    port: {{ $ports.mongodb | default 27017 }}
+    targetPort: {{ $ports.mongodb | default 27017 }}
+    protocol: TCP
+  {{- else if and .Values.mongodb.enabled ($expose.mongodb | default true) }}
   - name: mongodb
     port: {{ $ports.mongodb | default 27017 }}
     targetPort: {{ $ports.mongodb | default 27017 }}
