@@ -273,7 +273,8 @@ Warning:
 
 ## Recommended Order
 
-1. Edit `db-cluster/values.yaml` or use `db-cluster/values.small-cluster.yaml`.
+1. Edit `db-cluster/values.yaml`.
+   Use `db-cluster/values.small-cluster.yaml` only if you intentionally want the reduced-capacity profile.
 2. Put passwords in `.env`.
 3. Run `./setup.sh preflight`.
 4. Run `./setup.sh` or `./setup.sh small_setup`.

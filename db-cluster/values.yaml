@@ -26,7 +26,7 @@ ingress:
 # Runs separately from the database operators and forwards to internal services.
 # =============================================================================
 externalTcpProxy:
-  enabled: false
+  enabled: true
   image:
     repository: haproxy
     tag: "3.0-alpine"
@@ -37,7 +37,8 @@ externalTcpProxy:
   hostNetwork: true
   dnsPolicy: ClusterFirstWithHostNet
   # Pin the proxy to the node that already receives the public IP traffic.
-  nodeSelector: {}
+  nodeSelector:
+    kubernetes.io/hostname: worker01
   tolerations: []
   affinity: {}
   resources: {}
@@ -93,13 +94,13 @@ externalSecrets:
 # external IP already routing traffic to your ingress controller.
 # =============================================================================
 cloudflare:
-  enabled: false
-  zoneName: ""
-  externalIP: ""
+  enabled: true
+  zoneName: seang.shop
+  externalIP: 35.194.146.154
   proxied: false
   ttl: 1
   apiToken: ""
-  apiTokenExistingSecret: ""
+  apiTokenExistingSecret: cloudflare-api-token
   apiTokenSecretKey: token
 
 # =============================================================================
@@ -223,23 +224,17 @@ postgresql:
     enabled: false
   externalAccess:
     enabled: false
-    # If serviceType is not set and externalIP/externalIPs are provided, the
-    # chart uses ClusterIP + externalIPs. Otherwise it defaults to LoadBalancer.
-    serviceType: ""
+    serviceType: LoadBalancer
     serviceName: ""
-    # Convenience for a single externally routed IP already owned by your
-    # machine/network path.
     externalIP: ""
-    # Optional list form if you have more than one externally routed IP.
     externalIPs: []
     loadBalancerClass: ""
     loadBalancerSourceRanges: []
     annotations: {}
     labels: {}
     updateStrategy: patch
-    # Add public DNS names here so cert-manager includes them in the database
-    # server certificate SANs. Example: postgres-db.example.com
-    publicHostnames: []
+    publicHostnames:
+      - postgres-db.seang.shop
   tls:
     enabled: true
     mode: operator
@@ -315,22 +310,21 @@ mongodb:
     enabled: false
   externalAccess:
     enabled: false
-    # For external replica set clients, publish one public hostname and map
-    # each MongoDB member to a stable external port on its own public hostname.
-    # When replicaSetHorizons.enabled=true, provide one hostname per member in
-    # publicHostnames, matching cluster.instances.
     replicaSetHorizons:
-      enabled: false
+      enabled: true
       basePort: 27017
       serviceType: ClusterIP
-    publicHostnames: []
+    publicHostnames:
+      - mongo-db-0.seang.shop
+      - mongo-db-1.seang.shop
+      - mongo-db-2.seang.shop
   tls:
-    enabled: true
+    enabled: false
     mode: certManager
     sslSecretName: ""
     sslInternalSecretName: ""
     certManager:
-      generateCA: true
+      generateCA: false
       issuer:
         name: ""
         kind: ClusterIssuer
@@ -344,6 +338,8 @@ mongodb:
       net:
         tls:
           allowConnectionsWithoutCertificates: true
+          clusterAuthX509:
+            attributes: O=MongoDB, OU=MongoDB Server
     env:
       - name: PATH
         value: /opt/percona:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -400,7 +396,7 @@ mongodb:
 # MYSQL — Percona Operator for MySQL (PXC)
 # =============================================================================
 mysql:
-  enabled: false
+  enabled: true
   operator:
     enabled: false
   externalAccess:
@@ -411,7 +407,8 @@ mysql:
     labels: {}
     # Add public DNS names here so cert-manager includes them in the database
     # server certificate SANs. Example: mysql-db.example.com
-    publicHostnames: []
+    publicHostnames:
+      - mysql-db.seang.shop
   tls:
     enabled: true
     mode: certManager
@@ -428,10 +425,10 @@ mysql:
     # The Percona operator enforces at least two HAProxy replicas as a safe
     # default. Match that here to avoid endless reconciliation churn.
     size: 2
-    readinessDelaySeconds: 15
-    readinessTimeoutSeconds: 5
-    livenessDelaySeconds: 60
-    livenessTimeoutSeconds: 5
+    readinessDelaySeconds: 30
+    readinessTimeoutSeconds: 10
+    livenessDelaySeconds: 120
+    livenessTimeoutSeconds: 10
 
   cluster:
     instances: 3
@@ -467,12 +464,15 @@ mysql:
 # REDIS — OpsTree Redis Operator
 # =============================================================================
 redis:
-  enabled: false
+  enabled: true
   operator:
     enabled: false
+  auth:
+    password: ""
   externalAccess:
-    enabled: false
-    publicHostnames: []
+    enabled: true
+    publicHostnames:
+      - redis-db.seang.shop
   tls:
     enabled: true
     secretName: ""
@@ -489,6 +489,19 @@ redis:
   cluster:
     instances: 3
     image: redis:7.2-alpine
+    probes:
+      # The operator's default TLS exec probes only allow a 1s timeout, which
+      # is too aggressive during initial cluster bootstrap on Longhorn-backed
+      # storage. Give the first leader enough time to answer redis-cli --tls
+      # health checks so the StatefulSet can advance to the remaining members.
+      readinessInitialDelaySeconds: 30
+      readinessTimeoutSeconds: 10
+      readinessPeriodSeconds: 10
+      readinessFailureThreshold: 12
+      livenessInitialDelaySeconds: 120
+      livenessTimeoutSeconds: 10
+      livenessPeriodSeconds: 20
+      livenessFailureThreshold: 6
     resources:
       requests:
         cpu: "100m"
@@ -514,7 +527,8 @@ cassandra:
     enabled: false
   externalAccess:
     enabled: false
-    publicHostnames: []
+    publicHostnames:
+      - cassandra-db.seang.shop
   tls:
     enabled: false
     clientEncryption: true

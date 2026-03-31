@@ -4,6 +4,8 @@ metadata:
   name: {{ include "redis.fullname" . }}
   namespace: {{ .Release.Namespace }}
 {{- $tls := .Values.tls | default dict }}
+{{- $auth := .Values.auth | default dict }}
+{{- $redisPassword := get $auth "password" | default "" }}
 spec:
   clusterSize: {{ .Values.cluster.instances }}
   clusterVersion: v7
@@ -18,6 +20,34 @@ spec:
   {{- end }}
 
   redisLeader:
+    readinessProbe:
+      exec:
+        command:
+        - sh
+        - -ec
+        - |
+          RESP="$(redis-cli -h 127.0.0.1 -p "${REDIS_PORT}" -a "${REDIS_PASSWORD}"{{- if $tls.enabled }} --tls --cert "${REDIS_TLS_CERT}" --key "${REDIS_TLS_CERT_KEY}" --cacert "${REDIS_TLS_CA_CERT}"{{- end }} ping | tail -n 1)"
+          [ "$RESP" = "PONG" ]
+      initialDelaySeconds: {{ .Values.cluster.probes.readinessInitialDelaySeconds }}
+      timeoutSeconds: {{ .Values.cluster.probes.readinessTimeoutSeconds }}
+      periodSeconds: {{ .Values.cluster.probes.readinessPeriodSeconds }}
+      failureThreshold: {{ .Values.cluster.probes.readinessFailureThreshold }}
+    livenessProbe:
+      exec:
+        command:
+        - sh
+        - -ec
+        - |
+          RESP="$(redis-cli -h 127.0.0.1 -p "${REDIS_PORT}" -a "${REDIS_PASSWORD}"{{- if $tls.enabled }} --tls --cert "${REDIS_TLS_CERT}" --key "${REDIS_TLS_CERT_KEY}" --cacert "${REDIS_TLS_CA_CERT}"{{- end }} ping | tail -n 1)"
+          [ "$RESP" = "PONG" ]
+      initialDelaySeconds: {{ .Values.cluster.probes.livenessInitialDelaySeconds }}
+      timeoutSeconds: {{ .Values.cluster.probes.livenessTimeoutSeconds }}
+      periodSeconds: {{ .Values.cluster.probes.livenessPeriodSeconds }}
+      failureThreshold: {{ .Values.cluster.probes.livenessFailureThreshold }}
+    {{- if or $tls.enabled $redisPassword }}
+    redisConfig:
+      additionalRedisConfig: {{ include "redis.additionalConfigName" . }}
+    {{- end }}
     affinity:
       podAntiAffinity:
         preferredDuringSchedulingIgnoredDuringExecution:
@@ -29,6 +59,34 @@ spec:
                 app: {{ include "redis.fullname" . }}
 
   redisFollower:
+    readinessProbe:
+      exec:
+        command:
+        - sh
+        - -ec
+        - |
+          RESP="$(redis-cli -h 127.0.0.1 -p "${REDIS_PORT}" -a "${REDIS_PASSWORD}"{{- if $tls.enabled }} --tls --cert "${REDIS_TLS_CERT}" --key "${REDIS_TLS_CERT_KEY}" --cacert "${REDIS_TLS_CA_CERT}"{{- end }} ping | tail -n 1)"
+          [ "$RESP" = "PONG" ]
+      initialDelaySeconds: {{ .Values.cluster.probes.readinessInitialDelaySeconds }}
+      timeoutSeconds: {{ .Values.cluster.probes.readinessTimeoutSeconds }}
+      periodSeconds: {{ .Values.cluster.probes.readinessPeriodSeconds }}
+      failureThreshold: {{ .Values.cluster.probes.readinessFailureThreshold }}
+    livenessProbe:
+      exec:
+        command:
+        - sh
+        - -ec
+        - |
+          RESP="$(redis-cli -h 127.0.0.1 -p "${REDIS_PORT}" -a "${REDIS_PASSWORD}"{{- if $tls.enabled }} --tls --cert "${REDIS_TLS_CERT}" --key "${REDIS_TLS_CERT_KEY}" --cacert "${REDIS_TLS_CA_CERT}"{{- end }} ping | tail -n 1)"
+          [ "$RESP" = "PONG" ]
+      initialDelaySeconds: {{ .Values.cluster.probes.livenessInitialDelaySeconds }}
+      timeoutSeconds: {{ .Values.cluster.probes.livenessTimeoutSeconds }}
+      periodSeconds: {{ .Values.cluster.probes.livenessPeriodSeconds }}
+      failureThreshold: {{ .Values.cluster.probes.livenessFailureThreshold }}
+    {{- if or $tls.enabled $redisPassword }}
+    redisConfig:
+      additionalRedisConfig: {{ include "redis.additionalConfigName" . }}
+    {{- end }}
     affinity:
       podAntiAffinity:
         preferredDuringSchedulingIgnoredDuringExecution:

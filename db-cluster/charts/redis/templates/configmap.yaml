@@ -1,0 +1,30 @@
+{{- $tls := .Values.tls | default dict -}}
+{{- $auth := .Values.auth | default dict -}}
+{{- $redisPassword := get $auth "password" | default "" -}}
+{{- if or $tls.enabled $redisPassword }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "redis.additionalConfigName" . }}
+  namespace: {{ .Release.Namespace }}
+data:
+  redis-additional.conf: |
+    {{- if $tls.enabled }}
+    cluster-enabled yes
+    cluster-config-file /data/nodes.conf
+    cluster-node-timeout 5000
+    dir /data
+    port 0
+    tls-port {{ .Values.cluster.port | default 6379 }}
+    tls-cert-file /tls/{{ get $tls "certKey" | default "tls.crt" }}
+    tls-key-file /tls/{{ get $tls "privateKeyKey" | default "tls.key" }}
+    tls-ca-cert-file /tls/{{ get $tls "caKey" | default "ca.crt" }}
+    tls-auth-clients no
+    tls-replication yes
+    tls-cluster yes
+    {{- end }}
+    {{- if $redisPassword }}
+    requirepass {{ $redisPassword }}
+    masterauth {{ $redisPassword }}
+    {{- end }}
+{{- end }}

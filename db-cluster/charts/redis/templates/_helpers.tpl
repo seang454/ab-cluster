@@ -21,3 +21,7 @@
 {{- define "redis.caIssuerName" -}}
 {{- printf "%s-ca-issuer" (include "redis.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
+
+{{- define "redis.additionalConfigName" -}}
+{{- printf "%s-config" (include "redis.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}

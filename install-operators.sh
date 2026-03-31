@@ -78,7 +78,9 @@ cleanup_pending_release() {
   local namespace="$2"
   local status
 
-  status="$(helm status "$release" -n "$namespace" 2>/dev/null | awk '/^STATUS:/ {print $2}')"
+  if ! status="$(helm status "$release" -n "$namespace" 2>/dev/null | awk '/^STATUS:/ {print $2}')"; then
+    status=""
+  fi
 
   case "$status" in
     pending-install|pending-upgrade|pending-rollback)
@@ -137,6 +139,7 @@ install_redis_operator() {
     --namespace "$REDIS_NAMESPACE" \
     --create-namespace \
     --version "$REDIS_OPERATOR_VERSION" \
+    --set "featureGates.GenerateConfigInInitContainer=true" \
     --set "resources.requests.cpu=$REDIS_OPERATOR_REQUEST_CPU" \
     --set "resources.requests.memory=$REDIS_OPERATOR_REQUEST_MEMORY" \
     --set "resources.limits.cpu=$REDIS_OPERATOR_LIMIT_CPU" \

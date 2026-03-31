@@ -64,6 +64,26 @@ validate_profile_values() {
     fi
 }
 
+require_real_passwords() {
+    local PLACEHOLDER_KEYS=(
+        PG_PASS
+        MONGO_PASS
+        MYSQL_PASS
+        REDIS_PASS
+        CASS_PASS
+    )
+
+    local key value
+    for key in "${PLACEHOLDER_KEYS[@]}"; do
+        value="${!key:-}"
+        case "$value" in
+            ""|"YourPostgresPassword"|"YourMongoPassword"|"YourMysqlPassword"|"YourRedisPassword"|"YourCassandraPassword")
+                die "Set a real value for $key in .env before running setup/deploy."
+                ;;
+        esac
+    done
+}
+
 profile_values_files() {
     local DEFAULT_VALUES="$CHART_DIR/values.yaml"
     printf '%s\n' "$DEFAULT_VALUES"
@@ -640,6 +660,53 @@ prune_disabled_database_operators() {
     prune_operator mysql pxc-operator "$NAMESPACE"
     prune_operator redis redis-operator "$NAMESPACE"
     prune_operator cassandra k8ssandra-operator "$NAMESPACE"
+}
+
+cleanup_stale_mongodb_state() {
+    local MONGO_CR="${RELEASE}-mongodb"
+    local INTERNAL_USERS_SECRET="internal-${RELEASE}-mongodb-users"
+    local USERS_SECRET="${RELEASE}-mongodb-credentials"
+    local KEYFILE_SECRET="${RELEASE}-mongodb-mongodb-keyfile"
+    local ENCRYPTION_SECRET="${RELEASE}-mongodb-mongodb-encryption-key"
+    local PVC_PREFIX="mongod-data-${RELEASE}-mongodb-rs0-"
+
+    info "Removing stale MongoDB state that can survive between teardown and redeploy..."
+
+    kubectl delete psmdb "$MONGO_CR" -n "$NAMESPACE" --ignore-not-found --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null || true
+    kubectl delete secret "$INTERNAL_USERS_SECRET" -n "$NAMESPACE" --ignore-not-found --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null || true
+    kubectl delete secret "$USERS_SECRET" -n "$NAMESPACE" --ignore-not-found --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null || true
+    kubectl delete secret "$KEYFILE_SECRET" -n "$NAMESPACE" --ignore-not-found --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null || true
+    kubectl delete secret "$ENCRYPTION_SECRET" -n "$NAMESPACE" --ignore-not-found --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null || true
+
+    for i in 0 1 2; do
+        kubectl delete pvc "${PVC_PREFIX}${i}" -n "$NAMESPACE" --ignore-not-found --wait=false --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null || true
+    done
+
+    ok "Stale MongoDB state removed"
+}
+
+cleanup_stale_mongodb_bootstrap_if_needed() {
+    local MONGO_CR="${RELEASE}-mongodb"
+    local INTERNAL_USERS_SECRET="internal-${RELEASE}-mongodb-users"
+    local USERS_SECRET="${RELEASE}-mongodb-credentials"
+
+    local ENABLED
+    ENABLED=" $(enabled_databases) "
+    [[ "$ENABLED" == *" mongodb "* ]] || return 0
+
+    if kubectl get psmdb "$MONGO_CR" -n "$NAMESPACE" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    if kubectl get secret "$INTERNAL_USERS_SECRET" -n "$NAMESPACE" >/dev/null 2>&1; then
+        info "Found stale MongoDB bootstrap secret without a live PSMDB cluster; cleaning it before deploy"
+        kubectl delete secret "$INTERNAL_USERS_SECRET" -n "$NAMESPACE" --ignore-not-found --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null || true
+    fi
+
+    if kubectl get secret "$USERS_SECRET" -n "$NAMESPACE" >/dev/null 2>&1; then
+        info "Found stale MongoDB ExternalSecret output without a live PSMDB cluster; cleaning it before deploy"
+        kubectl delete secret "$USERS_SECRET" -n "$NAMESPACE" --ignore-not-found --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null || true
+    fi
 }
 
 preflight() {
@@ -1262,12 +1329,14 @@ install_operators() {
 deploy() {
     log "[8/8] Deploying db-cluster chart..."
 
+    require_real_passwords
     : "${PG_PASS:?Add PG_PASS to .env}"
     : "${MONGO_PASS:?Add MONGO_PASS to .env}"
     : "${MYSQL_PASS:?Add MYSQL_PASS to .env}"
     : "${REDIS_PASS:?Add REDIS_PASS to .env}"
     : "${CASS_PASS:?Add CASS_PASS to .env}"
     ensure_cloudflare_secret_if_present
+    cleanup_stale_mongodb_bootstrap_if_needed
 
     # Clean up any ad-hoc RBAC from previous recovery attempts so Helm can own it.
     kubectl delete role my-db-vault-auth-secret-reader -n "$NAMESPACE" --ignore-not-found 2>/dev/null || true
@@ -1302,6 +1371,7 @@ deploy() {
         --set "vault.mysql.monitorPassword=$MYSQL_PASS" \
         --set "vault.mysql.clusterCheckPassword=$MYSQL_PASS" \
         --set "vault.redis.password=$REDIS_PASS" \
+        --set "redis.auth.password=$REDIS_PASS" \
         --set "vault.cassandra.password=$CASS_PASS" \
         --timeout 10m \
         || die "db-cluster chart deploy failed"
@@ -1373,6 +1443,7 @@ setup() {
     echo " db-cluster setup starting..."
     echo "============================================="
 
+    require_real_passwords
     preflight       || die "Step preflight failed"
     repos           || die "Step repos failed"
     ingress_nginx   || die "Step ingress_nginx failed"
@@ -1543,6 +1614,7 @@ upgrade() {
         --set "vault.mysql.monitorPassword=$MYSQL_PASS" \
         --set "vault.mysql.clusterCheckPassword=$MYSQL_PASS" \
         --set "vault.redis.password=$REDIS_PASS" \
+        --set "redis.auth.password=$REDIS_PASS" \
         --set "vault.cassandra.password=$CASS_PASS" \
         --timeout 10m \
         || die "Upgrade failed"
@@ -1558,6 +1630,8 @@ teardown() {
     echo "==> WARNING: This will permanently delete ALL data in 5 seconds"
     echo "    Ctrl+C to cancel..."
     sleep 5
+
+    cleanup_stale_mongodb_state
 
     # ── 1. Remove Longhorn admission webhooks FIRST ───────────────────────
     # Without this, every PVC patch/delete fails with "webhook service not found"
@@ -1745,7 +1819,7 @@ teardownremain() {
 # =============================================================================
 usage() {
     echo "Usage: ./setup.sh [command]"
-    echo "Env:    VALUES_FILE=./db-cluster/values.cloudflare-example.yaml ./setup.sh"
+    echo "Default: edit db-cluster/values.yaml, then run ./setup.sh"
     echo ""
     echo "1. setup"
     echo "   Run the normal full install using db-cluster/values.yaml."

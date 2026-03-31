@@ -190,6 +190,12 @@ mysql:
 
 redis:
   enabled: false   # flip to true to install Redis operator + Redis
+  cluster:
+    probes:
+      readinessInitialDelaySeconds: 30
+      readinessTimeoutSeconds: 10
+      livenessInitialDelaySeconds: 120
+      livenessTimeoutSeconds: 10
 
 cassandra:
   enabled: false   # flip to true to install K8ssandra operator + Cassandra

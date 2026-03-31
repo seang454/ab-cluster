@@ -85,6 +85,9 @@ spec:
   - "*.{{ include "mysql.fullname" . }}-pxc.{{ .Release.Namespace }}"
   - "*.{{ include "mysql.fullname" . }}-pxc.{{ .Release.Namespace }}.svc"
   - "*.{{ include "mysql.fullname" . }}-pxc.{{ .Release.Namespace }}.svc.cluster.local"
+  {{- range ($ext.publicHostnames | default list) }}
+  - {{ . }}
+  {{- end }}
   issuerRef:
     {{- if $generateCA }}
     name: {{ include "mysql.caIssuerName" . }}

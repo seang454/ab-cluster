@@ -48,6 +48,11 @@ metadata:
 spec:
   secretName: {{ include "mongodb.sslSecretName" . }}
   commonName: {{ include "mongodb.fullname" . }}-rs0
+  subject:
+    organizations:
+    - MongoDB
+    organizationalUnits:
+    - MongoDB Server
   privateKey:
     algorithm: RSA
     size: 2048
@@ -58,6 +63,10 @@ spec:
   - {{ include "mongodb.fullname" . }}-rs0.{{ .Release.Namespace }}.svc.cluster.local
   {{- range $i, $_ := until $instances }}
   - {{ include "mongodb.fullname" $ }}-rs0-{{ $i }}
+  - {{ include "mongodb.fullname" $ }}-rs0-{{ $i }}.{{ include "mongodb.fullname" $ }}-rs0
+  - {{ include "mongodb.fullname" $ }}-rs0-{{ $i }}.{{ include "mongodb.fullname" $ }}-rs0.{{ $.Release.Namespace }}
+  - {{ include "mongodb.fullname" $ }}-rs0-{{ $i }}.{{ include "mongodb.fullname" $ }}-rs0.{{ $.Release.Namespace }}.svc
+  - {{ include "mongodb.fullname" $ }}-rs0-{{ $i }}.{{ include "mongodb.fullname" $ }}-rs0.{{ $.Release.Namespace }}.svc.cluster.local
   - {{ include "mongodb.fullname" $ }}-rs0-{{ $i }}.{{ $.Release.Namespace }}
   - {{ include "mongodb.fullname" $ }}-rs0-{{ $i }}.{{ $.Release.Namespace }}.svc
   - {{ include "mongodb.fullname" $ }}-rs0-{{ $i }}.{{ $.Release.Namespace }}.svc.cluster.local
@@ -84,6 +93,11 @@ metadata:
 spec:
   secretName: {{ include "mongodb.sslInternalSecretName" . }}
   commonName: {{ include "mongodb.fullname" . }}-internal
+  subject:
+    organizations:
+    - MongoDB
+    organizationalUnits:
+    - MongoDB Server
   privateKey:
     algorithm: RSA
     size: 2048

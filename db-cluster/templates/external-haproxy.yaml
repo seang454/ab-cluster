@@ -56,15 +56,20 @@ data:
     {{ end }}
 
     {{- if $mongoHorizonsEnabled }}
-    {{- range $i, $_ := until (int .Values.mongodb.cluster.instances) }}
-    # Public MongoDB listener for replica-set member {{ $i }}.
-    frontend mongodb_frontend_{{ $i }}
-      bind *:{{ add ($ports.mongodb | default 27017 | int) $i }}
-      default_backend mongodb_backend_{{ $i }}
+    # Public MongoDB listener for replica-set members selected by TLS SNI.
+    frontend mongodb_frontend
+      bind *:{{ $ports.mongodb | default 27017 }}
+      tcp-request inspect-delay 5s
+      tcp-request content accept if { req.ssl_hello_type 1 }
+      {{- range $i, $host := $mongoPublicHosts }}
+      use_backend mongodb_backend_{{ $i }} if { req.ssl_sni -i {{ $host }} }
+      {{- end }}
+      default_backend mongodb_backend_0
 
+    {{- range $i, $_ := until (int .Values.mongodb.cluster.instances) }}
     backend mongodb_backend_{{ $i }}
       server mongodb{{ $i }} {{ $.Release.Name }}-mongodb-rs0-{{ $i }}.{{ $.Release.Name }}-mongodb-rs0.{{ $.Release.Namespace }}.svc.cluster.local:27017 check resolvers kube_dns init-addr none
-    {{ end }}
+    {{- end }}
     {{- else if and .Values.mongodb.enabled ($expose.mongodb | default true) }}
     # Public MongoDB listener -> internal replica set service.
     frontend mongodb_frontend

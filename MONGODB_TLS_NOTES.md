@@ -208,27 +208,23 @@ net:
 ```
 
 ### 4. External HAProxy routing
-- Public ports now map stably per member:
-
-```text
-27017 -> rs0-0
-27018 -> rs0-1
-27019 -> rs0-2
-```
+- All public hostnames resolve to the same external IP and share port 27017.
+- HAProxy chooses the backend by TLS SNI so each hostname always lands on
+- its matching member.
 
 ### 5. Replica-set advertised horizons
-- MongoDB now advertises the same public host:port endpoints that HAProxy exposes.
+- MongoDB now advertises the same hostnames (on port 27017) that HAProxy exposes.
 
 ## Final Working External URI
 
 ```text
-mongodb://clusterAdmin:YourMongoPassword@mongo-db-0.seang.shop:27017,mongo-db-1.seang.shop:27018,mongo-db-2.seang.shop:27019/admin?replicaSet=rs0&authSource=admin&tls=true
+mongodb://clusterAdmin:YourMongoPassword@mongo-db-0.seang.shop:27017,mongo-db-1.seang.shop:27017,mongo-db-2.seang.shop:27017/admin?replicaSet=rs0&authSource=admin&tls=true
 ```
 
 Example:
 
 ```bash
-mongosh "mongodb://clusterAdmin:YourMongoPassword@mongo-db-0.seang.shop:27017,mongo-db-1.seang.shop:27018,mongo-db-2.seang.shop:27019/admin?replicaSet=rs0&authSource=admin&tls=true" --tls --tlsCAFile /mnt/d/CSTADPreUniversityTraining/ITP/iacfinal/mongo-ca.crt
+mongosh "mongodb://clusterAdmin:YourMongoPassword@mongo-db-0.seang.shop:27017,mongo-db-1.seang.shop:27017,mongo-db-2.seang.shop:27017/admin?replicaSet=rs0&authSource=admin&tls=true" --tls --tlsCAFile /mnt/d/CSTADPreUniversityTraining/ITP/iacfinal/mongo-ca.crt
 ```
 
 ## Should Other Databases Use The Same Concept?
