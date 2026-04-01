@@ -1,0 +1,124 @@
+{{- $cassandra := .Values.cassandra | default dict -}}
+{{- $cleanup := dig "tls" "cleanupOnDisable" false $cassandra -}}
+{{- if and (not (dig "enabled" false $cassandra)) $cleanup }}
+{{- $clusterName := dig "cluster" "config" "clusterName" "seang-cassandra" $cassandra -}}
+{{- $datacenter := dig "cluster" "config" "datacenter" "dc1" $cassandra -}}
+{{- $namespace := .Release.Namespace -}}
+{{- $statefulSet := printf "%s-%s-default-sts" $clusterName $datacenter -}}
+{{- $cassandraService := printf "%s-%s-service" $clusterName $datacenter -}}
+{{- $allPodsService := printf "%s-%s-all-pods-service" $clusterName $datacenter -}}
+{{- $additionalSeedService := printf "%s-%s-additional-seed-service" $clusterName $datacenter -}}
+{{- $seedService := printf "%s-seed-service" $clusterName -}}
+{{- $superuserSecretName := printf "%s-cassandra-credentials" .Release.Name -}}
+{{- $serverSecretName := "cassandra-server-keystore-secret" -}}
+{{- $clientSecretName := "cassandra-client-trust-secret" -}}
+{{- $caConfigName := printf "%s-client-ca" (printf "%s-cassandra" .Release.Name) -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Release.Name }}-cassandra-cleanup
+  namespace: {{ $namespace }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-40"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Release.Name }}-cassandra-cleanup
+  namespace: {{ $namespace }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-40"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+rules:
+- apiGroups: ["cassandra.datastax.com"]
+  resources: ["cassandradatacenters"]
+  verbs: ["get", "list", "watch", "delete", "patch", "update"]
+- apiGroups: ["apps"]
+  resources: ["statefulsets"]
+  verbs: ["get", "list", "watch", "delete", "patch", "update"]
+- apiGroups: [""]
+  resources: ["services", "pods", "secrets", "configmaps", "persistentvolumeclaims"]
+  verbs: ["get", "list", "watch", "delete", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Release.Name }}-cassandra-cleanup
+  namespace: {{ $namespace }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-40"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .Release.Name }}-cassandra-cleanup
+subjects:
+- kind: ServiceAccount
+  name: {{ .Release.Name }}-cassandra-cleanup
+  namespace: {{ $namespace }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-cassandra-cleanup
+  namespace: {{ $namespace }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-30"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ .Release.Name }}-cassandra-cleanup
+      containers:
+      - name: cleanup
+        image: bitnami/kubectl:latest
+        imagePullPolicy: IfNotPresent
+        command:
+        - /bin/sh
+        - -ec
+        - |
+          set -eu
+
+          ns="{{ $namespace }}"
+          dc="{{ $datacenter }}"
+          cluster="{{ $clusterName }}"
+          sts="{{ $statefulSet }}"
+
+          echo "Deleting Cassandra datacenter ${dc}..."
+          kubectl delete cassandradatacenter "${dc}" -n "${ns}" --ignore-not-found=true --wait=false || true
+
+          for _ in $(seq 1 30); do
+            if ! kubectl get cassandradatacenter "${dc}" -n "${ns}" >/dev/null 2>&1; then
+              break
+            fi
+            sleep 5
+          done
+
+          if kubectl get cassandradatacenter "${dc}" -n "${ns}" >/dev/null 2>&1; then
+            kubectl patch cassandradatacenter "${dc}" -n "${ns}" --type=merge -p '{"metadata":{"finalizers":[]}}' || true
+            kubectl delete cassandradatacenter "${dc}" -n "${ns}" --ignore-not-found=true --wait=false || true
+          fi
+
+          echo "Deleting Cassandra StatefulSet and services..."
+          kubectl delete statefulset "${sts}" -n "${ns}" --ignore-not-found=true --wait=false || true
+          kubectl delete service "{{ $cassandraService }}" -n "${ns}" --ignore-not-found=true || true
+          kubectl delete service "{{ $allPodsService }}" -n "${ns}" --ignore-not-found=true || true
+          kubectl delete service "{{ $additionalSeedService }}" -n "${ns}" --ignore-not-found=true || true
+          kubectl delete service "{{ $seedService }}" -n "${ns}" --ignore-not-found=true || true
+
+          echo "Deleting Cassandra secrets and ConfigMap..."
+          kubectl delete secret "{{ $superuserSecretName }}" -n "${ns}" --ignore-not-found=true || true
+          kubectl delete secret "{{ $serverSecretName }}" -n "${ns}" --ignore-not-found=true || true
+          kubectl delete secret "{{ $clientSecretName }}" -n "${ns}" --ignore-not-found=true || true
+          kubectl delete configmap "{{ $caConfigName }}" -n "${ns}" --ignore-not-found=true || true
+
+          echo "Deleting Cassandra PVCs..."
+          kubectl delete pvc -n "${ns}" -l cassandra.datastax.com/cluster="${cluster}",cassandra.datastax.com/datacenter="${dc}" --ignore-not-found=true || true
+{{- end }}

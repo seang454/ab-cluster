@@ -3,13 +3,19 @@
 # Hybrid secret approach: Vault (source of truth) + ESO (syncs to K8s Secrets)
 # =============================================================================
 
+# This file is the single place to tune cluster-wide behavior: ingress, DNS,
+# secret syncing, database exposure, and each database operator's defaults.
+
 # =============================================================================
 # CERT-MANAGER ClusterIssuer
 # =============================================================================
 certManager:
+  # Shared issuer used by the HTTP ingress and any cert-manager-backed database TLS.
   enabled: true
+  # Email used by Let's Encrypt for ACME registration and renewal notices.
   email: pengseangsim210@gmail.com
   clusterIssuer:
+    # Named issuer referenced by ingress and any TLS-enabled subcharts.
     name: letsencrypt-prod
     server: https://acme-v02.api.letsencrypt.org/directory
     ingressClass: nginx
@@ -18,6 +24,7 @@ certManager:
 # GENERIC INGRESS
 # =============================================================================
 ingress:
+  # Default ingress class for HTTP services.
   className: nginx
 
 # =============================================================================
@@ -26,18 +33,23 @@ ingress:
 # Runs separately from the database operators and forwards to internal services.
 # =============================================================================
 externalTcpProxy:
+  # Shared TCP entrypoint for all database ports exposed outside the cluster.
   enabled: true
   image:
+    # HAProxy is the single L4 hop that forwards public DB traffic to cluster services.
     repository: haproxy
     tag: "3.0-alpine"
     pullPolicy: IfNotPresent
   replicas: 1
+  # Recreate avoids hostPort collisions when the single pinned proxy pod is replaced.
+  strategy: Recreate
   # Bind HAProxy directly to the node network so the node's public IP can
   # accept raw database TCP traffic such as 5432.
   hostNetwork: true
   dnsPolicy: ClusterFirstWithHostNet
   # Pin the proxy to the node that already receives the public IP traffic.
   nodeSelector:
+    # Keep the proxy pinned to the node that already owns the public IP route.
     kubernetes.io/hostname: worker01
   tolerations: []
   affinity: {}
@@ -53,10 +65,12 @@ externalTcpProxy:
     redis: true
     cassandra: true
   ports:
+    # Native database ports preserved so clients can connect without port translation.
     postgresql: 5432
     mysql: 3306
     mongodb: 27017
     redis: 6379
+    # Cassandra uses the standard 9042 port through HAProxy.
     cassandra: 9042
   timeouts:
     connect: 10s
@@ -67,9 +81,11 @@ externalTcpProxy:
 # LONGHORN UI Ingress
 # =============================================================================
 longhorn:
+  # Longhorn backs the persistent volumes for all enabled stateful workloads.
   enabled: true
   namespace: longhorn-system
   ingress:
+    # Longhorn UI is exposed separately from the database TCP path.
     enabled: true
     host: longhorn.seang.shop
     ingressClassName: nginx
@@ -85,6 +101,7 @@ longhorn:
 # Operators consume plain K8s Secrets — no code changes needed.
 # =============================================================================
 externalSecrets:
+  # ESO mirrors Vault secrets into Kubernetes Secrets for the operators.
   enabled: true
   installCRDs: true
 
@@ -94,12 +111,17 @@ externalSecrets:
 # external IP already routing traffic to your ingress controller.
 # =============================================================================
 cloudflare:
+  # Cloudflare DNS automation maps public database hostnames to the cluster IP.
   enabled: true
+  # DNS zone that owns the database hostnames.
   zoneName: seang.shop
+  # External IP already routed to your ingress or TCP proxy path.
   externalIP: 35.194.146.154
+  # Use DNS-only records for raw database ports.
   proxied: false
   ttl: 1
   apiToken: ""
+  # Existing secret that stores the API token for DNS updates.
   apiTokenExistingSecret: cloudflare-api-token
   apiTokenSecretKey: token
 
@@ -109,50 +131,23 @@ cloudflare:
 # Deploys to its own namespace: vault-transit
 # =============================================================================
 vaultTransit:
+  # Transit Vault provides the unseal key for the main Vault deployment.
   enabled: true
   namespace: vault-transit
+  # Small persistent volume is enough because this Vault only stores transit state.
   storageClass: longhorn
   storageSize: 2Gi
 
 # =============================================================================
-# VAULT — Source of truth for all secrets
-# =============================================================================
-#
-# Transit unseal is enabled by default — no cloud KMS required.
-# vault-transit subchart runs first and creates the vault-transit-token secret
-# automatically. Main Vault reads it via secretKeyRef.
-#
-# DO NOT put real passwords here — pass via --set at deploy time:
-#
-#   export PG_PASS="YourRealPass"
-#   export MONGO_PASS="YourRealPass"
-#   export MYSQL_PASS="YourRealPass"
-#   export REDIS_PASS="YourRealPass"
-#   export CASS_PASS="YourRealPass"
-#
-#   helm install my-db ./db-cluster/ -n databases --create-namespace \
-#     --set "vault.postgresql.superuserPassword=$PG_PASS" \
-#     --set "vault.postgresql.appPassword=$PG_PASS" \
-#     --set "vault.mongodb.clusterAdminPassword=$MONGO_PASS" \
-#     --set "vault.mongodb.userAdminPassword=$MONGO_PASS" \
-#     --set "vault.mongodb.clusterMonitorPassword=$MONGO_PASS" \
-#     --set "vault.mongodb.databaseAdminPassword=$MONGO_PASS" \
-#     --set "vault.mongodb.backupPassword=$MONGO_PASS" \
-#     --set "vault.mongodb.replicationKey=$MONGO_PASS" \
-#     --set "vault.mysql.rootPassword=$MYSQL_PASS" \
-#     --set "vault.mysql.appPassword=$MYSQL_PASS" \
-#     --set "vault.mysql.replicationPassword=$MYSQL_PASS" \
-#     --set "vault.mysql.monitorPassword=$MYSQL_PASS" \
-#     --set "vault.mysql.clusterCheckPassword=$MYSQL_PASS" \
-#     --set "vault.redis.password=$REDIS_PASS" \
-#     --set "vault.cassandra.password=$CASS_PASS"
-# =============================================================================
 vault:
+  # Main Vault stores the credentials used by the database operators.
   enabled: true
   # HTTP for internal cluster communication (transit vault is also HTTP)
   address: "http://vault.vault.svc.cluster.local:8200"
+  # Kubernetes auth role used by the setup job and ESO access.
   role: "db-role"
   ingress:
+    # Vault UI/API gets its own HTTPS ingress for operators and admin access.
     enabled: true
     namespace: vault
     host: vault.seang.shop
@@ -164,6 +159,8 @@ vault:
       clusterIssuer: "letsencrypt-prod"
 
   autoUnseal:
+    # Transit is the active unseal path for this repo.
+    # The other KMS providers stay disabled unless you explicitly switch them on.
     awskms:
       enabled: false
       region: "ap-southeast-1"
@@ -188,11 +185,13 @@ vault:
       mountPath: "transit"
       key: "unseal-key"
 
-  # All passwords EMPTY — pass via --set from env vars at deploy time (see above)
+  # These values are the source-of-truth credentials stored in Vault.
+  # They are intentionally empty in git; inject real values through `--set`.
   postgresql:
     superuserPassword: ""
     appPassword: ""
   mongodb:
+    # MongoDB users and replication secrets are populated into Vault before install.
     clusterAdminUser: "clusterAdmin"
     clusterAdminPassword: ""
     userAdminUser: "userAdmin"
@@ -205,24 +204,29 @@ vault:
     backupPassword: ""
     replicationKey: ""
   mysql:
+    # MySQL/PXC secret keys used by the Vault setup job and app credentials.
     rootPassword: ""
     appPassword: ""
     replicationPassword: ""
     monitorPassword: ""
     clusterCheckPassword: ""
   redis:
+    # Redis password consumed by the Redis operator.
     password: ""
   cassandra:
+    # Cassandra password consumed by the Cassandra ESO secret.
     password: ""
 
 # =============================================================================
 # POSTGRESQL — CloudNativePG Operator
 # =============================================================================
 postgresql:
+  # PostgreSQL stays disabled here unless you explicitly turn it on.
   enabled: false
   operator:
     enabled: false
   externalAccess:
+    # LoadBalancer mode is kept for clusters that want direct public exposure.
     enabled: false
     serviceType: LoadBalancer
     serviceName: ""
@@ -236,6 +240,7 @@ postgresql:
     publicHostnames:
       - postgres-db.seang.shop
   tls:
+    # Normal TLS for external clients; keep false only if you want mTLS.
     enabled: true
     mode: operator
     existingSecretName: ""
@@ -289,13 +294,16 @@ postgresql:
       enabled: false
 
   storage:
+    # Persistent volume size for each PostgreSQL instance.
     size: 10Gi
     storageClass: longhorn
+    # WAL gets its own volume so write-ahead logs do not contend with main data.
     wal:
       enabled: true
       size: 2Gi
 
   backup:
+    # Backups are off by default to avoid writing to an unset object store.
     enabled: false
     destinationPath: "s3://your-bucket/postgresql"
     credentialSecret: "gcs-credentials"
@@ -305,6 +313,7 @@ postgresql:
 # MONGODB — Percona Operator for MongoDB
 # =============================================================================
 mongodb:
+  # MongoDB replica-set values and TLS behavior.
   enabled: false
   operator:
     enabled: false
@@ -331,6 +340,7 @@ mongodb:
         group: cert-manager.io
 
   cluster:
+    # Replica set members plus internal TLS/X.509 behavior for the Percona operator.
     crVersion: "1.22.0"
     instances: 3
     image: percona/percona-server-mongodb:7.0.30-16
@@ -382,10 +392,12 @@ mongodb:
         memory: "3Gi"
 
   storage:
+    # Size of each MongoDB member's persistent volume.
     size: 10Gi
     storageClass: longhorn
 
   backup:
+    # Disabled until an S3 bucket and credentials are actually provided.
     enabled: false
     s3:
       bucket: your-bucket
@@ -396,10 +408,12 @@ mongodb:
 # MYSQL — Percona Operator for MySQL (PXC)
 # =============================================================================
 mysql:
-  enabled: true
+  # MySQL/PXC values and external access settings.
+  enabled: false
   operator:
     enabled: false
   externalAccess:
+    # External hostnames are only used when the database is intentionally public.
     enabled: false
     loadBalancerClass: ""
     loadBalancerSourceRanges: []
@@ -410,7 +424,7 @@ mysql:
     publicHostnames:
       - mysql-db.seang.shop
   tls:
-    enabled: true
+    enabled: false
     mode: certManager
     sslSecretName: ""
     sslInternalSecretName: ""
@@ -431,6 +445,7 @@ mysql:
     livenessTimeoutSeconds: 10
 
   cluster:
+    # PXC instances are sized for quorum and anti-affinity across nodes.
     instances: 3
     image: percona/percona-xtradb-cluster:8.0
     probes:
@@ -450,10 +465,12 @@ mysql:
         memory: "2Gi"
 
   storage:
+    # Persistent volume size for the MySQL data directory.
     size: 10Gi
     storageClass: longhorn
 
   backup:
+    # Backups remain disabled until remote storage is configured.
     enabled: false
     s3:
       bucket: your-bucket
@@ -464,17 +481,19 @@ mysql:
 # REDIS — OpsTree Redis Operator
 # =============================================================================
 redis:
-  enabled: true
+  # Redis cluster values and TLS settings.
+  enabled: false
   operator:
     enabled: false
   auth:
     password: ""
   externalAccess:
-    enabled: true
+    # Public hostname for Redis when exposing it outside the cluster.
+    enabled: false
     publicHostnames:
       - redis-db.seang.shop
   tls:
-    enabled: true
+    enabled: false
     secretName: ""
     caKey: ca.crt
     certKey: tls.crt
@@ -487,6 +506,7 @@ redis:
         group: cert-manager.io
 
   cluster:
+    # Redis is small and memory-sensitive, so requests stay modest.
     instances: 3
     image: redis:7.2-alpine
     probes:
@@ -511,10 +531,12 @@ redis:
         memory: "1Gi"
 
   storage:
+    # Smaller volume than the SQL databases because Redis data is usually lighter.
     size: 5Gi
     storageClass: longhorn
 
   exporter:
+    # Exporter is off by default to keep the footprint down.
     enabled: false
     image: quay.io/opstree/redis-exporter:v1.44.0
 
@@ -522,33 +544,39 @@ redis:
 # CASSANDRA — K8ssandra Operator
 # =============================================================================
 cassandra:
+  # Cassandra uses the chart-managed TLS bootstrap path.
   enabled: false
   operator:
     enabled: false
   externalAccess:
-    enabled: false
+    # Public hostname used by HAProxy and the TLS bootstrap job.
+    enabled: true
     publicHostnames:
       - cassandra-db.seang.shop
   tls:
-    enabled: false
+    enabled: true
+    # Encrypt client traffic; keep client cert auth off for normal external access.
     clientEncryption: true
+    # Set to true only if you want mTLS for clients as well as internode encryption.
     requireClientAuth: false
+    # Internode encryption is on by default because Cassandra recommends it.
     internodeEncryption: all
-    createSecrets: false
-    serverSecretName: ""
-    clientSecretName: ""
+    # The subchart generates the JKS secrets automatically during Helm install/upgrade.
+    createSecrets: true
+    # When Cassandra is disabled, the next upgrade removes the datacenter and PVCs.
+    cleanupOnDisable: true
+    serverSecretName: cassandra-server-keystore-secret
+    clientSecretName: cassandra-client-trust-secret
     serverSecret:
-      keystore: ""
-      keystorePassword: ""
-      truststore: ""
-      truststorePassword: ""
+      keystorePassword: "mypassword"
+      truststorePassword: "mypassword"
+
     clientSecret:
-      keystore: ""
-      keystorePassword: ""
-      truststore: ""
-      truststorePassword: ""
+      keystorePassword: "mypassword"
+      truststorePassword: "mypassword"
 
   cluster:
+    # Cassandra needs memory-heavy config-builder and logger sidecars to stay healthy.
     instances: 3
     image: k8ssandra/cass-management-api:4.1.3
     config:
@@ -556,30 +584,32 @@ cassandra:
       datacenter: dc1
     resources:
       requests:
-        cpu: "400m"
-        memory: "1536Mi"
+        cpu: "200m"
+        memory: "1Gi"
       limits:
         cpu: "1"
         memory: "3Gi"
     configBuilderResources:
       requests:
-        cpu: "250m"
-        memory: "192Mi"
+        cpu: "100m"
+        memory: "128Mi"
       limits:
         cpu: "500m"
         memory: "384Mi"
     systemLoggerResources:
       requests:
-        cpu: "50m"
+        cpu: "20m"
         memory: "64Mi"
       limits:
         memory: "128Mi"
 
   storage:
+    # Persistent volume size for each Cassandra node.
     size: 10Gi
     storageClass: longhorn
 
   backup:
+    # Medusa backups are disabled until object storage is ready.
     enabled: false
     medusaImage: k8ssandra/medusa:0.14.0
     s3:

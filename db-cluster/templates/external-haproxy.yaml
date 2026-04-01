@@ -1,6 +1,9 @@
 {{- $proxy := .Values.externalTcpProxy | default dict -}}
 {{- $expose := $proxy.expose | default dict -}}
 {{- $ports := $proxy.ports | default dict -}}
+{{- $cassandra := .Values.cassandra | default dict -}}
+{{- $cassandraCluster := dig "cluster" "config" "clusterName" "" $cassandra -}}
+{{- $cassandraDatacenter := dig "cluster" "config" "datacenter" "dc1" $cassandra -}}
 {{- $mongoExt := .Values.mongodb.externalAccess | default dict -}}
 {{- $mongoHorizons := get $mongoExt "replicaSetHorizons" | default dict -}}
 {{- $mongoPublicHosts := $mongoExt.publicHostnames | default list -}}
@@ -97,7 +100,7 @@ data:
       default_backend cassandra_backend
 
     backend cassandra_backend
-      server cassandra {{ .Release.Name }}-dc1-service.{{ .Release.Namespace }}.svc.cluster.local:9042 check resolvers kube_dns init-addr none
+      server cassandra {{ $cassandraCluster }}-{{ $cassandraDatacenter }}-service.{{ .Release.Namespace }}.svc.cluster.local:9042 check resolvers kube_dns init-addr none
     {{ end }}
 ---
 apiVersion: apps/v1
@@ -107,6 +110,8 @@ metadata:
   namespace: {{ .Release.Namespace }}
 spec:
   replicas: {{ $proxy.replicas | default 1 }}
+  strategy:
+    type: {{ $proxy.strategy | default "Recreate" }}
   selector:
     matchLabels:
       app.kubernetes.io/name: external-haproxy

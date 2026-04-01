@@ -14,10 +14,10 @@ spec:
       cassandraYaml:
         server_encryption_options:
           internode_encryption: {{ get $tls "internodeEncryption" | default "all" | quote }}
-          require_client_auth: {{ get $tls "requireClientAuth" | default true }}
+          require_client_auth: {{ dig "requireClientAuth" true $tls }}
         client_encryption_options:
-          enabled: {{ get $tls "clientEncryption" | default true }}
-          require_client_auth: {{ get $tls "requireClientAuth" | default true }}
+          enabled: {{ dig "clientEncryption" true $tls }}
+          require_client_auth: {{ dig "requireClientAuth" true $tls }}
     serverEncryptionStores:
       keystoreSecretRef:
         name: {{ include "cassandra.serverSecretName" . }}
