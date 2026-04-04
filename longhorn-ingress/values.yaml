@@ -1,0 +1,14 @@
+issuer:
+  email: pengseangsim210@gmail.com
+  name: letsencrypt-prod
+  server: https://acme-v02.api.letsencrypt.org/directory
+  ingressClass: nginx
+
+ingress:
+  host: longhorn.seang.shop
+  ingressClassName: nginx
+  tlsSecret: longhorn-tls
+  serviceName: longhorn-frontend
+  servicePort: 80
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"

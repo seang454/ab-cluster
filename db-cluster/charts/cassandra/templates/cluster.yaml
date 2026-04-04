@@ -30,7 +30,6 @@ spec:
         name: {{ include "cassandra.clientSecretName" . }}
     {{- end }}
 
-    # Secret created automatically by ExternalSecret (ESO) from Vault
     superuserSecretRef:
       name: {{ include "cassandra.secretName" . }}
 

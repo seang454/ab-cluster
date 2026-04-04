@@ -10,6 +10,10 @@
 injector:
   enabled: false
 
+ui:
+  enabled: true
+  serviceType: ClusterIP
+
 server:
   dataStorage:
     enabled: true
@@ -47,7 +51,7 @@ server:
         # For transit seal, Vault reads the token from VAULT_TOKEN.
         # Keep the token out of the HCL config and inject it via the secret below.
         seal "transit" {
-          address    = "http://vault-transit.vault-transit.svc.cluster.local:8200"
+          address    = "http://vault-transit-vault-transit.vault-transit.svc.cluster.local:8200"
           mount_path = "transit"
           key_name   = "unseal-key"
         }
@@ -55,6 +59,9 @@ server:
         service_registration "kubernetes" {}
 
         disable_mlock = true
+
+  ingress:
+    enabled: false
 
   # Reads vault-transit-token K8s secret → injects as VAULT_TOKEN
   # Transit seal uses VAULT_TOKEN automatically.

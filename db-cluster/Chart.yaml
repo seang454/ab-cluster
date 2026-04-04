@@ -1,131 +1,26 @@
 apiVersion: v2
 name: db-cluster
 description: >
-  Umbrella chart for operator-based multi-database HA clusters.
-  Each database uses its own dedicated Kubernetes operator.
-  Secrets managed via Vault + External Secrets Operator (hybrid approach).
-  Transit Vault provides auto-unseal — no cloud KMS required.
-  Enable any combination by toggling flags in values.yaml.
-version: 4.0.0
-appVersion: "4.0.0"
+  Database application chart for PostgreSQL, MongoDB, MySQL, Redis, and Cassandra.
+  Bootstrap infrastructure is managed separately from this app release.
+version: 4.0.1
+appVersion: "4.0.1"
 home: https://github.com/seang454/db-cluster
 maintainers:
 - name: seang454
-keywords: [postgresql, mongodb, mysql, redis, cassandra, ha, cluster, operator, vault]
+keywords: [postgresql, mongodb, mysql, redis, cassandra, ha, cluster, operator]
 
 # =============================================================================
 # PRE-INSTALLED BY KUBESPRAY (no action needed):
 #   ✔ Kubernetes + RBAC
 #   ✔ cert-manager
 #   ✔ ingress controller (this repo targets a standard Kubernetes Ingress)
+# DEPLOY THIS CHART (database app release only):
 #
-# INSTALL LONGHORN SEPARATELY:
-#   helm repo add longhorn https://charts.longhorn.io && helm repo update
-#   helm install longhorn longhorn/longhorn \
-#     --namespace longhorn-system --create-namespace --version 1.11.1
-#
-# DEPLOY THIS CHART (everything installs automatically in correct order):
-#
-#   Step 1 — Add helm repos
-#   helm repo add hashicorp    https://helm.releases.hashicorp.com
-#   helm repo add cnpg         https://cloudnative-pg.github.io/charts
-#   helm repo add percona      https://percona.github.io/percona-helm-charts/
-#   helm repo add ot-helm      https://ot-container-kit.github.io/helm-charts/
-#   helm repo add k8ssandra    https://helm.k8ssandra.io/stable
-#   helm repo add ext-secrets  https://charts.external-secrets.io
-#   helm repo update
-#
-#   Step 2 — Update dependencies
-#   helm dependency update ./db-cluster/
-#
-#   Step 3 — Install main Vault HA (separately — required before this chart)
-#   helm install vault hashicorp/vault \
-#     --namespace vault --create-namespace \
-#     --set "server.ha.enabled=true" \
-#     --set "server.ha.replicas=3" \
-#     --set "injector.enabled=false"
-#
-#   Step 4 — Deploy this chart (pass real passwords via env vars)
-#   export PG_PASS="YourRealPass"
-#   export MONGO_PASS="YourRealPass"
-#   export MYSQL_PASS="YourRealPass"
-#   export REDIS_PASS="YourRealPass"
-#   export CASS_PASS="YourRealPass"
-#
-#   helm install my-db ./db-cluster/ -n databases --create-namespace \
-#     --set "vault.postgresql.superuserPassword=$PG_PASS" \
-#     --set "vault.postgresql.appPassword=$PG_PASS" \
-#     --set "vault.mongodb.clusterAdminPassword=$MONGO_PASS" \
-#     --set "vault.mongodb.userAdminPassword=$MONGO_PASS" \
-#     --set "vault.mongodb.replicationKey=$MONGO_PASS" \
-#     --set "vault.mysql.rootPassword=$MYSQL_PASS" \
-#     --set "vault.mysql.appPassword=$MYSQL_PASS" \
-#     --set "vault.mysql.replicationPassword=$MYSQL_PASS" \
-#     --set "vault.mysql.monitorPassword=$MYSQL_PASS" \
-#     --set "vault.mysql.clusterCheckPassword=$MYSQL_PASS" \
-#     --set "vault.redis.password=$REDIS_PASS" \
-#     --set "vault.cassandra.password=$CASS_PASS"
-#
-#   Step 5 — After first deploy, initialize main Vault
-#   kubectl exec -n vault vault-0 -- vault operator init \
-#     -key-shares=5 -key-threshold=3 -format=json > vault-init.json
-#   # Unseal with 3 of 5 keys (transit vault handles this automatically on restart)
-#   kubectl exec -n vault -it vault-0 -- vault operator unseal KEY1
-#   kubectl exec -n vault -it vault-0 -- vault operator unseal KEY2
-#   kubectl exec -n vault -it vault-0 -- vault operator unseal KEY3
-#   # Store root token for setup-job
-#   kubectl create secret generic vault-root-token \
-#     --from-literal=token=ROOT_TOKEN -n databases
+#   helm install my-db ./db-cluster/ -n databases --create-namespace
 # =============================================================================
 
 dependencies:
-
-  # ── External Secrets Operator — syncs Vault secrets into K8s Secrets ───────
-  - name: external-secrets
-    version: "0.9.13"
-    repository: "https://charts.external-secrets.io"
-    condition: externalSecrets.enabled
-
-  # ── Transit Vault — auto-unseal authority (no cloud KMS required) ──────────
-  # Installs first (weight 10) — creates vault-transit-token secret
-  # Main vault setup-job (weight 20) waits for this token before running
-  - name: vault-transit
-    version: "1.0.0"
-    repository: "file://charts/vault-transit"
-    condition: vaultTransit.enabled
-
-  # ── Local vault setup subchart — RBAC, ClusterSecretStore, setup Job ────────
-  - name: vault
-    version: "1.0.0"
-    repository: "file://charts/vault"
-    condition: vault.enabled
-
-  # ── Database operators ───────────────────────────────────────────────────────
-  - name: cloudnative-pg
-    version: "0.21.0"
-    repository: "https://cloudnative-pg.github.io/charts"
-    condition: postgresql.operator.enabled
-
-  - name: psmdb-operator
-    version: "1.22.0"
-    repository: "https://percona.github.io/percona-helm-charts/"
-    condition: mongodb.operator.enabled
-
-  - name: pxc-operator
-    version: "1.14.0"
-    repository: "https://percona.github.io/percona-helm-charts/"
-    condition: mysql.operator.enabled
-
-  - name: redis-operator
-    version: "0.24.0"
-    repository: "https://ot-container-kit.github.io/helm-charts/"
-    condition: redis.operator.enabled
-
-  - name: k8ssandra-operator
-    version: "1.14.0"
-    repository: "https://helm.k8ssandra.io/stable"
-    condition: cassandra.operator.enabled
-
   # ── Local database subcharts (CRDs — deployed after operators are ready) ────
   - name: postgresql
     version: "1.0.0"

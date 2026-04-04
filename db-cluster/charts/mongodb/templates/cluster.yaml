@@ -18,7 +18,6 @@ spec:
     allowInvalidCertificates: false
   {{- end }}
 
-  # Secret created automatically by ExternalSecret (ESO) from Vault
   secrets:
     users: {{ include "mongodb.secretName" . }}
     {{- if .Values.tls.enabled }}

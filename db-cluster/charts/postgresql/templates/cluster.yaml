@@ -19,7 +19,6 @@ spec:
     serverTLSSecret: {{ include "postgresql.serverTLSSecretName" . }}
     serverCASecret: {{ include "postgresql.serverCASecretName" . }}
   {{- end }}
-  # Secret created automatically by ExternalSecret (ESO) from Vault
   superuserSecret:
     name: {{ include "postgresql.superuserSecretName" . }}
 

@@ -1,24 +1,10 @@
 # =============================================================================
 # db-cluster v4 — Operator-based Umbrella Chart Values
-# Hybrid secret approach: Vault (source of truth) + ESO (syncs to K8s Secrets)
+# Cluster-wide knobs for the database app chart. Bootstrap layers live in setup.sh.
 # =============================================================================
 
-# This file is the single place to tune cluster-wide behavior: ingress, DNS,
-# secret syncing, database exposure, and each database operator's defaults.
-
-# =============================================================================
-# CERT-MANAGER ClusterIssuer
-# =============================================================================
-certManager:
-  # Shared issuer used by the HTTP ingress and any cert-manager-backed database TLS.
-  enabled: true
-  # Email used by Let's Encrypt for ACME registration and renewal notices.
-  email: pengseangsim210@gmail.com
-  clusterIssuer:
-    # Named issuer referenced by ingress and any TLS-enabled subcharts.
-    name: letsencrypt-prod
-    server: https://acme-v02.api.letsencrypt.org/directory
-    ingressClass: nginx
+# This file tunes cluster-wide behavior: ingress, DNS, database exposure,
+# and each database subchart's defaults.
 
 # =============================================================================
 # GENERIC INGRESS
@@ -78,34 +64,6 @@ externalTcpProxy:
     server: 1m
 
 # =============================================================================
-# LONGHORN UI Ingress
-# =============================================================================
-longhorn:
-  # Longhorn backs the persistent volumes for all enabled stateful workloads.
-  enabled: true
-  namespace: longhorn-system
-  ingress:
-    # Longhorn UI is exposed separately from the database TCP path.
-    enabled: true
-    host: longhorn.seang.shop
-    ingressClassName: nginx
-    annotations: {}
-    tls:
-      enabled: true
-      secretName: longhorn-tls
-      clusterIssuer: "letsencrypt-prod"
-
-# =============================================================================
-# EXTERNAL SECRETS OPERATOR
-# Syncs secrets from Vault into Kubernetes Secrets automatically.
-# Operators consume plain K8s Secrets — no code changes needed.
-# =============================================================================
-externalSecrets:
-  # ESO mirrors Vault secrets into Kubernetes Secrets for the operators.
-  enabled: true
-  installCRDs: true
-
-# =============================================================================
 # CLOUDFLARE DNS AUTOMATION
 # Creates/updates DNS-only A records for database hostnames that point at the
 # external IP already routing traffic to your ingress controller.
@@ -126,98 +84,6 @@ cloudflare:
   apiTokenSecretKey: token
 
 # =============================================================================
-# VAULT TRANSIT — single-node Vault, auto-unseals the main Vault HA cluster
-# No cloud KMS required — completely self-contained inside your cluster
-# Deploys to its own namespace: vault-transit
-# =============================================================================
-vaultTransit:
-  # Transit Vault provides the unseal key for the main Vault deployment.
-  enabled: true
-  namespace: vault-transit
-  # Small persistent volume is enough because this Vault only stores transit state.
-  storageClass: longhorn
-  storageSize: 2Gi
-
-# =============================================================================
-vault:
-  # Main Vault stores the credentials used by the database operators.
-  enabled: true
-  # HTTP for internal cluster communication (transit vault is also HTTP)
-  address: "http://vault.vault.svc.cluster.local:8200"
-  # Kubernetes auth role used by the setup job and ESO access.
-  role: "db-role"
-  ingress:
-    # Vault UI/API gets its own HTTPS ingress for operators and admin access.
-    enabled: true
-    namespace: vault
-    host: vault.seang.shop
-    ingressClassName: nginx
-    annotations: {}
-    tls:
-      enabled: true
-      secretName: vault-tls
-      clusterIssuer: "letsencrypt-prod"
-
-  autoUnseal:
-    # Transit is the active unseal path for this repo.
-    # The other KMS providers stay disabled unless you explicitly switch them on.
-    awskms:
-      enabled: false
-      region: "ap-southeast-1"
-      kmsKeyId: "YOUR_KMS_KEY_ID"
-    gcpckms:
-      enabled: false
-      project: "your-gcp-project"
-      region: "global"
-      keyRing: "vault-keyring"
-      cryptoKey: "vault-key"
-      credentials: "/vault/userconfig/gcp-credentials/credentials.json"
-    azurekeyvault:
-      enabled: false
-      tenantId: "your-tenant-id"
-      vaultName: "your-keyvault-name"
-      keyName: "vault-unseal-key"
-    transit:
-      enabled: true
-      address: "http://vault-transit.vault-transit.svc.cluster.local:8200"
-      tokenSecretName: "vault-transit-token"
-      tokenSecretKey: "token"
-      mountPath: "transit"
-      key: "unseal-key"
-
-  # These values are the source-of-truth credentials stored in Vault.
-  # They are intentionally empty in git; inject real values through `--set`.
-  postgresql:
-    superuserPassword: ""
-    appPassword: ""
-  mongodb:
-    # MongoDB users and replication secrets are populated into Vault before install.
-    clusterAdminUser: "clusterAdmin"
-    clusterAdminPassword: ""
-    userAdminUser: "userAdmin"
-    userAdminPassword: ""
-    clusterMonitorUser: "clusterMonitor"
-    clusterMonitorPassword: ""
-    databaseAdminUser: "databaseAdmin"
-    databaseAdminPassword: ""
-    backupUser: "backup"
-    backupPassword: ""
-    replicationKey: ""
-  mysql:
-    # MySQL/PXC secret keys used by the Vault setup job and app credentials.
-    rootPassword: ""
-    appPassword: ""
-    replicationPassword: ""
-    monitorPassword: ""
-    clusterCheckPassword: ""
-  redis:
-    # Redis password consumed by the Redis operator.
-    password: ""
-  cassandra:
-    # Cassandra password consumed by the Cassandra ESO secret.
-    password: ""
-
-# =============================================================================
 # POSTGRESQL — CloudNativePG Operator
 # =============================================================================
 postgresql:
@@ -225,6 +91,10 @@ postgresql:
   enabled: false
   operator:
     enabled: false
+  credentials:
+    superuser: ""
+    admin: ""
+    standby: ""
   externalAccess:
     # LoadBalancer mode is kept for clusters that want direct public exposure.
     enabled: false
@@ -317,6 +187,18 @@ mongodb:
   enabled: false
   operator:
     enabled: false
+  credentials:
+    clusterAdminUser: clusterAdmin
+    clusterAdminPassword: ""
+    userAdminUser: userAdmin
+    userAdminPassword: ""
+    clusterMonitorUser: clusterMonitor
+    clusterMonitorPassword: ""
+    databaseAdminUser: databaseAdmin
+    databaseAdminPassword: ""
+    backupUser: backup
+    backupPassword: ""
+    replicationKey: ""
   externalAccess:
     enabled: false
     replicaSetHorizons:
@@ -412,6 +294,11 @@ mysql:
   enabled: false
   operator:
     enabled: false
+  credentials:
+    rootPassword: ""
+    replicationPassword: ""
+    monitorPassword: ""
+    clusterCheckPassword: ""
   externalAccess:
     # External hostnames are only used when the database is intentionally public.
     enabled: false
@@ -548,6 +435,9 @@ cassandra:
   enabled: false
   operator:
     enabled: false
+  credentials:
+    username: cassandra
+    password: ""
   externalAccess:
     # Public hostname used by HAProxy and the TLS bootstrap job.
     enabled: true

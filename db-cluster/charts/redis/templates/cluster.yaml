@@ -107,7 +107,6 @@ spec:
       limits:
         cpu: {{ .Values.cluster.resources.limits.cpu }}
         memory: {{ .Values.cluster.resources.limits.memory }}
-    # Secret created automatically by ExternalSecret (ESO) from Vault
     redisSecret:
       name: {{ include "redis.secretName" . }}
       key: password

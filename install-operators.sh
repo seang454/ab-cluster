@@ -73,6 +73,22 @@ print(" ".join(enabled))
 PY
 }
 
+requested_databases() {
+  if [ "$#" -gt 0 ]; then
+    printf '%s\n' "$@"
+    return 0
+  fi
+
+  if [ -n "${OPERATORS:-}" ]; then
+    for db in ${OPERATORS//,/ }; do
+      [ -n "$db" ] && printf '%s\n' "$db"
+    done
+    return 0
+  fi
+
+  printf '%s\n' postgresql mongodb mysql redis cassandra
+}
+
 cleanup_pending_release() {
   local release="$1"
   local namespace="$2"
@@ -91,6 +107,28 @@ cleanup_pending_release() {
   esac
 }
 
+release_status() {
+  local release="$1"
+  local namespace="$2"
+
+  helm status "$release" -n "$namespace" 2>/dev/null | awk '/^STATUS:/ {print $2}'
+}
+
+skip_if_deployed() {
+  local release="$1"
+  local namespace="$2"
+  local label="$3"
+  local status
+
+  status="$(release_status "$release" "$namespace")"
+  if [ "$status" = "deployed" ]; then
+    ok "$label already installed in namespace $namespace; skipping"
+    return 0
+  fi
+
+  return 1
+}
+
 repos() {
   log "Adding Helm repositories"
   helm repo add cnpg https://cloudnative-pg.github.io/charts >/dev/null 2>&1 || true
@@ -103,6 +141,7 @@ repos() {
 }
 
 install_cnpg() {
+  skip_if_deployed cnpg "$CNPG_NAMESPACE" "CloudNativePG operator" && return 0
   log "Installing CloudNativePG operator"
   helm upgrade --install cnpg cnpg/cloudnative-pg \
     --namespace "$CNPG_NAMESPACE" \
@@ -113,6 +152,7 @@ install_cnpg() {
 }
 
 install_psmdb() {
+  skip_if_deployed psmdb-operator "$PSMDB_NAMESPACE" "Percona PSMDB operator" && return 0
   log "Installing Percona PSMDB operator"
   helm upgrade --install psmdb-operator percona/psmdb-operator \
     --namespace "$PSMDB_NAMESPACE" \
@@ -123,6 +163,7 @@ install_psmdb() {
 }
 
 install_pxc() {
+  skip_if_deployed pxc-operator "$PXC_NAMESPACE" "Percona PXC operator" && return 0
   log "Installing Percona PXC operator"
   helm upgrade --install pxc-operator percona/pxc-operator \
     --namespace "$PXC_NAMESPACE" \
@@ -133,6 +174,9 @@ install_pxc() {
 }
 
 install_redis_operator() {
+  if skip_if_deployed redis-operator "$REDIS_NAMESPACE" "Redis operator"; then
+    return 0
+  fi
   cleanup_pending_release redis-operator "$REDIS_NAMESPACE"
   log "Installing OpsTree Redis operator"
   helm upgrade --install redis-operator ot-helm/redis-operator \
@@ -166,6 +210,7 @@ ensure_cert_manager() {
 
 install_k8ssandra() {
   ensure_cert_manager
+  skip_if_deployed k8ssandra-operator "$K8SSANDRA_NAMESPACE" "K8ssandra operator" && return 0
   log "Installing K8ssandra operator"
   helm upgrade --install k8ssandra-operator k8ssandra/k8ssandra-operator \
     --namespace "$K8SSANDRA_NAMESPACE" \
@@ -180,6 +225,7 @@ usage() {
 Usage:
   ./install-operators.sh repos
   ./install-operators.sh all
+  ./install-operators.sh all postgresql mongodb
   ./install-operators.sh cnpg
   ./install-operators.sh psmdb
   ./install-operators.sh pxc
@@ -188,9 +234,10 @@ Usage:
 
 Examples:
   ./install-operators.sh all
+  OPERATORS=postgresql,mongodb,redis ./install-operators.sh all
+  ./install-operators.sh all mysql cassandra
   ./install-operators.sh cnpg
   NAMESPACE=databases ./install-operators.sh psmdb
-  VALUES_FILE=./db-cluster/values.small-cluster.yaml ./install-operators.sh all
 EOF
 }
 
@@ -199,6 +246,7 @@ main() {
   require_bin kubectl
 
   local cmd="${1:-all}"
+  shift || true
 
   case "$cmd" in
     repos)
@@ -207,10 +255,15 @@ main() {
     all)
       local enabled
       repos
-      enabled="$(enabled_databases)"
+      enabled="$(requested_databases "$@")"
       info_file="${VALUES_FILE}"
-      log "Installing operators for enabled databases from $info_file"
-      [ -n "$enabled" ] || die "No databases are enabled in $VALUES_FILE"
+      if [ "$#" -gt 0 ]; then
+        log "Installing requested operators: $*"
+      elif [ -n "${OPERATORS:-}" ]; then
+        log "Installing requested operators from OPERATORS: ${OPERATORS}"
+      else
+        log "Installing all database operators from $info_file"
+      fi
       for db in $enabled; do
         case "$db" in
           postgresql) install_cnpg ;;
@@ -218,6 +271,7 @@ main() {
           mysql) install_pxc ;;
           redis) install_redis_operator ;;
           cassandra) install_k8ssandra ;;
+          *) die "Unknown database operator requested: $db" ;;
         esac
       done
       ;;

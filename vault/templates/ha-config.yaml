@@ -57,8 +57,6 @@ metadata:
     app.kubernetes.io/name: vault-ha-config
     app.kubernetes.io/instance: {{ .Release.Name }}
 data:
-  # Token is read at runtime from the vault-transit-token K8s Secret
-  # injected as VAULT_TOKEN env var in the Vault pod spec
   extraconfig-from-values.hcl: |
     seal "transit" {
       address     = "{{ .Values.autoUnseal.transit.address }}"

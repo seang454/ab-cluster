@@ -7,6 +7,15 @@
 address: "http://vault.vault.svc.cluster.local:8200"
 role: "db-role"
 
+ingress:
+  enabled: true
+  ingressClassName: nginx
+  host: vault.seang.shop
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  tls:
+    secretName: vault-tls
+
 # =============================================================================
 # AUTO-UNSEAL — Transit (default, no cloud KMS required)
 # Only ONE option should have enabled: true at a time

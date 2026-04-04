@@ -7,7 +7,6 @@ metadata:
 spec:
   crVersion: 1.14.0
 
-  # Secret created automatically by ExternalSecret (ESO) from Vault
   secretsName: {{ include "mysql.secretName" . }}
   {{- if .Values.tls.enabled }}
   sslSecretName: {{ include "mysql.sslSecretName" . }}

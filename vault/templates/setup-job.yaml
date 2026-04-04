@@ -16,8 +16,6 @@ spec:
     spec:
       restartPolicy: OnFailure
       serviceAccountName: {{ include "vault.serviceAccountName" . }}
-      # Wait for vault-transit-token secret to exist before starting
-      # This ensures transit vault setup-job (weight=10) has finished
       initContainers:
       {{- if .Values.autoUnseal.transit.enabled }}
       - name: wait-transit-token

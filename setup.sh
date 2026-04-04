@@ -8,8 +8,9 @@
 #   ./setup.sh status      → show pods
 #   ./setup.sh <step>      → run one step
 #
-# STEPS (in order): preflight, repos, longhorn, deps, vault_transit,
-#                   vault_install, vault_init, install_operators, deploy
+# STEPS (in order): preflight, repos, longhorn, deps, install_operators,
+#                   vault_transit, vault_install, vault_init, vault_configure,
+#                   operator_plugins, deploy
 #
 # Create .env file with passwords before running:
 #   PG_PASS=secret  MONGO_PASS=secret  MYSQL_PASS=secret
@@ -21,7 +22,12 @@ NAMESPACE="databases"
 VAULT_NS="vault"
 TRANSIT_NS="vault-transit"
 CHART_DIR="./db-cluster"
+VAULT_CHART_DIR="./vault"
+TRANSIT_CHART_DIR="./vault-transit"
+VAULT_CONFIG_RELEASE="${VAULT_CONFIG_RELEASE:-vault-config}"
 LONGHORN_REPLICA_COUNT="${LONGHORN_REPLICA_COUNT:-1}"
+CERT_MANAGER_NAMESPACE="${CERT_MANAGER_NAMESPACE:-cert-manager}"
+CERT_MANAGER_VERSION="${CERT_MANAGER_VERSION:-v1.15.3}"
 OPERATOR_INSTALLER="${OPERATOR_INSTALLER:-./install-operators.sh}"
 VALUES_FILE="${VALUES_FILE:-}"
 
@@ -100,6 +106,65 @@ profile_label() {
     else
         printf '%s' "$DEFAULT_VALUES"
     fi
+}
+
+vault_transit_pod_name() {
+    kubectl get pod -n "$TRANSIT_NS" \
+        -l app.kubernetes.io/name=vault-transit,app.kubernetes.io/instance=vault-transit \
+        -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true
+}
+
+vault_transit_secret_value() {
+    local secret_name="$1"
+    local key_name="$2"
+    kubectl get secret "$secret_name" -n "$TRANSIT_NS" \
+        -o jsonpath="{.data['$key_name']}" 2>/dev/null | base64 -d 2>/dev/null || true
+}
+
+ensure_cert_manager() {
+    if kubectl get crd certificates.cert-manager.io >/dev/null 2>&1; then
+        ok "cert-manager already present"
+        return 0
+    fi
+
+    log "Installing cert-manager (required for Longhorn TLS ingress)"
+    helm repo add jetstack https://charts.jetstack.io >/dev/null 2>&1 || true
+    helm repo update >/dev/null 2>&1 || true
+    helm upgrade --install cert-manager jetstack/cert-manager \
+        --namespace "$CERT_MANAGER_NAMESPACE" \
+        --create-namespace \
+        --version "$CERT_MANAGER_VERSION" \
+        --set crds.enabled=true \
+        --wait --timeout 10m \
+        || die "cert-manager install failed"
+    ok "cert-manager installed in namespace $CERT_MANAGER_NAMESPACE"
+}
+
+vault_transit_regenerate_root_token() {
+    local pod_name="$1"
+    local key1="$2"
+    local key2="$3"
+    local key3="$4"
+    local start_json nonce otp resp encoded_token
+
+    start_json=$(kubectl exec -n "$TRANSIT_NS" "$pod_name" -- \
+        vault operator generate-root -init -format=json 2>/dev/null) \
+        || return 1
+
+    nonce=$(printf '%s' "$start_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["nonce"])')
+    otp=$(printf '%s' "$start_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["otp"])')
+
+    for key in "$key1" "$key2" "$key3"; do
+        resp=$(printf '%s' "$key" | kubectl exec -i -n "$TRANSIT_NS" "$pod_name" -- \
+            vault operator generate-root -nonce="$nonce" -format=json - 2>/dev/null) \
+            || return 1
+    done
+
+    encoded_token=$(printf '%s' "$resp" | python3 -c 'import json,sys; print(json.load(sys.stdin)["encoded_token"])')
+    [ -n "$encoded_token" ] || return 1
+
+    kubectl exec -n "$TRANSIT_NS" "$pod_name" -- \
+        vault operator generate-root -decode="$encoded_token" -otp="$otp" 2>/dev/null
 }
 
 cloudflare_job_config() {
@@ -781,6 +846,11 @@ select_vault_pod() {
         | awk '$1 ~ /^vault-[0-2]$/ && $3 == "Running" {print $1; exit}'
 }
 
+vault_status_json() {
+    local pod="$1"
+    kubectl exec -n "$VAULT_NS" "$pod" -- vault status -format=json 2>/dev/null || true
+}
+
 # =============================================================================
 # STEP 1 — REPOS
 # =============================================================================
@@ -829,62 +899,65 @@ ingress_nginx() {
 # =============================================================================
 longhorn() {
     log "[2/8] Installing Longhorn..."
+    ensure_cert_manager
+    local SKIP_LONGHORN_INSTALL=false
 
     # Already fully running? (manager + csi-attacher both present)
     MGR=$(kubectl get pods -n longhorn-system 2>/dev/null         | grep longhorn-manager | grep Running | wc -l || true)
     CSI=$(kubectl get pods -n longhorn-system 2>/dev/null         | grep csi-attacher | grep Running | wc -l || true)
     if [ "${MGR:-0}" -ge "1" ] && [ "${CSI:-0}" -ge "1" ]; then
-        ok "Longhorn already running — skipping"
+        ok "Longhorn already running"
         kubectl get pods -n longhorn-system | grep -v Completed | head -6
-        return 0
+        SKIP_LONGHORN_INSTALL=true
     fi
 
     # Clean up any broken previous install that blocks reinstall.
     # Helm release metadata can remain even when the namespace is already gone.
     LONGHORN_HELM_STATE="$(helm status longhorn -n longhorn-system 2>/dev/null | awk '/^STATUS:/ {print $2}' || true)"
-    if [ -n "$LONGHORN_HELM_STATE" ]; then
-        info "Found existing Helm release state for longhorn: $LONGHORN_HELM_STATE"
-        helm uninstall longhorn -n longhorn-system --no-hooks 2>/dev/null || true
-        for secret in $(kubectl get secret -A -o custom-columns=NS:.metadata.namespace,NAME:.metadata.name --no-headers 2>/dev/null \
-            | awk '$2 ~ /^sh\\.helm\\.release\\.v1\\.longhorn\\./ {print $1"/"$2}'); do
-            ns="${secret%%/*}"; name="${secret##*/}"
-            kubectl delete secret "$name" -n "$ns" --ignore-not-found 2>/dev/null || true
-        done
-    fi
-
-    # Clean up any broken previous install that blocks reinstall.
-    if kubectl get namespace longhorn-system &>/dev/null; then
-        info "Cleaning up previous Longhorn install..."
-        helm uninstall longhorn -n longhorn-system 2>/dev/null || true
-        # Remove finalizers from Longhorn CRs so they delete cleanly
-        kubectl get volumes.longhorn.io -n longhorn-system -o name 2>/dev/null             | xargs -I{} kubectl patch {} -n longhorn-system             -p '"'"'{"metadata":{"finalizers":[]}}'"'"' --type=merge 2>/dev/null || true
-        kubectl get nodes.longhorn.io -n longhorn-system -o name 2>/dev/null             | xargs -I{} kubectl patch {} -n longhorn-system             -p '"'"'{"metadata":{"finalizers":[]}}'"'"' --type=merge 2>/dev/null || true
-        kubectl delete pods --all -n longhorn-system --force --grace-period=0 2>/dev/null || true
-        for crd in $(kubectl get crd 2>/dev/null | grep longhorn | awk '"'"'{print $1}'"'"'); do
-            kubectl patch crd "$crd"                 -p '"'"'{"metadata":{"finalizers":[]}}'"'"' --type=merge 2>/dev/null || true
-        done
-        kubectl delete secret -n longhorn-system -l owner=helm 2>/dev/null || true
-        kubectl delete namespace longhorn-system --timeout=60s 2>/dev/null || true
-        # Force finalize if stuck terminating
-        if kubectl get namespace longhorn-system 2>/dev/null | grep -q Terminating; then
-            kubectl get namespace longhorn-system -o json                 | python3 -c "import sys,json; d=json.load(sys.stdin); d['"'"'spec'"'"']['"'"'finalizers'"'"']=[]; print(json.dumps(d))"                 | kubectl replace --raw /api/v1/namespaces/longhorn-system/finalize -f - 2>/dev/null || true
+    if [ "$SKIP_LONGHORN_INSTALL" != "true" ]; then
+        if [ -n "$LONGHORN_HELM_STATE" ]; then
+            info "Found existing Helm release state for longhorn: $LONGHORN_HELM_STATE"
+            helm uninstall longhorn -n longhorn-system --no-hooks 2>/dev/null || true
+            for secret in $(kubectl get secret -A -o custom-columns=NS:.metadata.namespace,NAME:.metadata.name --no-headers 2>/dev/null \
+                | awk '$2 ~ /^sh\\.helm\\.release\\.v1\\.longhorn\\./ {print $1"/"$2}'); do
+                ns="${secret%%/*}"; name="${secret##*/}"
+                kubectl delete secret "$name" -n "$ns" --ignore-not-found 2>/dev/null || true
+            done
         fi
-        info "Waiting for longhorn-system namespace to be gone..."
-        for i in $(seq 1 20); do
-            kubectl get namespace longhorn-system &>/dev/null || break
-            sleep 3
-        done
-    fi
 
-    # Install open-iscsi on all nodes via a privileged DaemonSet init container
-    # Uses ubuntu:22.04 for apt, then exits — main container is not needed
-    info "Installing open-iscsi on all nodes (Longhorn prerequisite)..."
+        # Clean up any broken previous install that blocks reinstall.
+        if kubectl get namespace longhorn-system &>/dev/null; then
+            info "Cleaning up previous Longhorn install..."
+            helm uninstall longhorn -n longhorn-system 2>/dev/null || true
+            # Remove finalizers from Longhorn CRs so they delete cleanly
+            kubectl get volumes.longhorn.io -n longhorn-system -o name 2>/dev/null             | xargs -I{} kubectl patch {} -n longhorn-system             -p '"'"'{"metadata":{"finalizers":[]}}'"'"' --type=merge 2>/dev/null || true
+            kubectl get nodes.longhorn.io -n longhorn-system -o name 2>/dev/null             | xargs -I{} kubectl patch {} -n longhorn-system             -p '"'"'{"metadata":{"finalizers":[]}}'"'"' --type=merge 2>/dev/null || true
+            kubectl delete pods --all -n longhorn-system --force --grace-period=0 2>/dev/null || true
+            for crd in $(kubectl get crd 2>/dev/null | grep longhorn | awk '"'"'{print $1}'"'"'); do
+                kubectl patch crd "$crd"                 -p '"'"'{"metadata":{"finalizers":[]}}'"'"' --type=merge 2>/dev/null || true
+            done
+            kubectl delete secret -n longhorn-system -l owner=helm 2>/dev/null || true
+            kubectl delete namespace longhorn-system --timeout=60s 2>/dev/null || true
+            # Force finalize if stuck terminating
+            if kubectl get namespace longhorn-system 2>/dev/null | grep -q Terminating; then
+                kubectl get namespace longhorn-system -o json                 | python3 -c "import sys,json; d=json.load(sys.stdin); d['"'"'spec'"'"']['"'"'finalizers'"'"']=[]; print(json.dumps(d))"                 | kubectl replace --raw /api/v1/namespaces/longhorn-system/finalize -f - 2>/dev/null || true
+            fi
+            info "Waiting for longhorn-system namespace to be gone..."
+            for i in $(seq 1 20); do
+                kubectl get namespace longhorn-system &>/dev/null || break
+                sleep 3
+            done
+        fi
 
-    # Clean up any previous attempt first
-    kubectl delete daemonset longhorn-iscsi-installation -n kube-system 2>/dev/null || true
-    sleep 3
+        # Install open-iscsi on all nodes via a privileged DaemonSet init container
+        # Uses ubuntu:22.04 for apt, then exits - main container is not needed
+        info "Installing open-iscsi on all nodes (Longhorn prerequisite)..."
 
-    kubectl apply -f - <<EOF
+        # Clean up any previous attempt first
+        kubectl delete daemonset longhorn-iscsi-installation -n kube-system 2>/dev/null || true
+        sleep 3
+
+        kubectl apply -f - <<EOF
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -929,51 +1002,85 @@ spec:
       - operator: Exists
 EOF
 
-    info "Waiting for iscsi init containers to complete on all nodes (up to 5 min)..."
+        info "Waiting for iscsi init containers to complete on all nodes (up to 5 min)..."
+        for i in $(seq 1 30); do
+            # Count nodes where init container has completed (pod Running = init done)
+            TOTAL=$(kubectl get nodes --no-headers 2>/dev/null | wc -l | tr -d ' 
+' || echo "0")
+            TOTAL="${TOTAL:-0}"
+            # Init container Completed means iscsi installed; pod Running means init done
+            DONE=$(kubectl get pods -n kube-system -l app=longhorn-iscsi-installation             --no-headers 2>/dev/null | grep -E "Running|Completed" | wc -l | tr -d ' 
+' || echo "0")
+            DONE="${DONE:-0}"
+            info "[$i/30] nodes with iscsi installed: $DONE/$TOTAL"
+            if [ "$TOTAL" -gt "0" ] && [ "$DONE" -ge "$TOTAL" ]; then break; fi
+            sleep 10
+        done
+
+        # Clean up the daemonset - it did its job
+        kubectl delete daemonset longhorn-iscsi-installation -n kube-system 2>/dev/null || true
+        ok "open-iscsi installed on all nodes"
+
+        # Install Longhorn
+        info "Installing Longhorn v1.11.1..."
+        if [ "$LONGHORN_HELM_STATE" = "deployed" ]; then
+            helm upgrade longhorn longhorn/longhorn \
+                --namespace longhorn-system \
+                --version 1.11.1 \
+                --set "persistence.defaultClassReplicaCount=${LONGHORN_REPLICA_COUNT}" \
+                || die "Longhorn Helm upgrade failed"
+        else
+            # Reinstall path: the release was removed or left behind in a non-deployed
+            # state, so use install instead of upgrade to avoid Helm's "no deployed releases" error.
+            helm install longhorn longhorn/longhorn \
+                --namespace longhorn-system \
+                --create-namespace \
+                --replace \
+                --version 1.11.1 \
+                --set "persistence.defaultClassReplicaCount=${LONGHORN_REPLICA_COUNT}" \
+                || die "Longhorn Helm install failed"
+        fi
+
+        info "Waiting for Longhorn to be fully ready (up to 10 min)..."
+        local READY=false
+        for i in $(seq 1 60); do
+            MGR=$(kubectl get pods -n longhorn-system 2>/dev/null             | grep longhorn-manager | grep Running | wc -l || true)
+            CSI=$(kubectl get pods -n longhorn-system 2>/dev/null             | grep csi-attacher | grep Running | wc -l || true)
+            info "[$i/60] manager=${MGR:-0} csi-attacher=${CSI:-0}"
+            if [ "${MGR:-0}" -ge "1" ] && [ "${CSI:-0}" -ge "1" ]; then
+                READY=true
+                break
+            fi
+            sleep 10
+        done
+
+        [ "$READY" = "true" ] || die "Longhorn did not become ready — check: kubectl get pods -n longhorn-system"
+        kubectl get storageclass longhorn 2>/dev/null | grep -q longhorn         || die "Longhorn storageclass not registered yet"
+        kubectl get storageclass longhorn -o jsonpath='{.parameters.numberOfReplicas}' 2>/dev/null | grep -qx "$LONGHORN_REPLICA_COUNT" \
+            || die "Longhorn storageclass replica count is not $LONGHORN_REPLICA_COUNT"
+
+        ok "Longhorn ready"
+        kubectl get pods -n longhorn-system | grep -v Completed
+    fi
+
+    log "[2.1/8] Longhorn TLS ingress"
+    helm upgrade --install longhorn-ingress ./longhorn-ingress \
+        --namespace longhorn-system \
+        --set ingress.host=longhorn.seang.shop \
+        --set ingress.tlsSecret=longhorn-tls \
+        --wait \
+        || die "longhorn-ingress install failed"
+
+    info "Waiting for Longhorn TLS secret to be issued..."
     for i in $(seq 1 30); do
-        # Count nodes where init container has completed (pod Running = init done)
-        TOTAL=$(kubectl get nodes --no-headers 2>/dev/null | wc -l | tr -d ' 
-' || echo "0")
-        TOTAL="${TOTAL:-0}"
-        # Init container Completed means iscsi installed; pod Running means init done
-        DONE=$(kubectl get pods -n kube-system -l app=longhorn-iscsi-installation             --no-headers 2>/dev/null | grep -E "Running|Completed" | wc -l | tr -d ' 
-' || echo "0")
-        DONE="${DONE:-0}"
-        info "[$i/30] nodes with iscsi installed: $DONE/$TOTAL"
-        if [ "$TOTAL" -gt "0" ] && [ "$DONE" -ge "$TOTAL" ]; then break; fi
-        sleep 10
-    done
-
-    # Clean up the daemonset — it did its job
-    kubectl delete daemonset longhorn-iscsi-installation -n kube-system 2>/dev/null || true
-    ok "open-iscsi installed on all nodes"
-
-    # Install Longhorn
-    info "Installing Longhorn v1.11.1..."
-    helm upgrade --install longhorn longhorn/longhorn         --namespace longhorn-system         --create-namespace         --version 1.11.1 \
-        --set "persistence.defaultClassReplicaCount=${LONGHORN_REPLICA_COUNT}" \
-        || die "Longhorn Helm install failed"
-
-    info "Waiting for Longhorn to be fully ready (up to 10 min)..."
-    local READY=false
-    for i in $(seq 1 60); do
-        MGR=$(kubectl get pods -n longhorn-system 2>/dev/null             | grep longhorn-manager | grep Running | wc -l || true)
-        CSI=$(kubectl get pods -n longhorn-system 2>/dev/null             | grep csi-attacher | grep Running | wc -l || true)
-        info "[$i/60] manager=${MGR:-0} csi-attacher=${CSI:-0}"
-        if [ "${MGR:-0}" -ge "1" ] && [ "${CSI:-0}" -ge "1" ]; then
-            READY=true
-            break
+        if kubectl get secret longhorn-tls -n longhorn-system >/dev/null 2>&1; then
+            ok "Longhorn TLS secret is ready"
+            return 0
         fi
         sleep 10
     done
 
-    [ "$READY" = "true" ] || die "Longhorn did not become ready — check: kubectl get pods -n longhorn-system"
-    kubectl get storageclass longhorn 2>/dev/null | grep -q longhorn         || die "Longhorn storageclass not registered yet"
-    kubectl get storageclass longhorn -o jsonpath='{.parameters.numberOfReplicas}' 2>/dev/null | grep -qx "$LONGHORN_REPLICA_COUNT" \
-        || die "Longhorn storageclass replica count is not $LONGHORN_REPLICA_COUNT"
-
-    ok "Longhorn ready"
-    kubectl get pods -n longhorn-system | grep -v Completed
+    die "Longhorn TLS secret was not issued. Check cert-manager, DNS for longhorn.seang.shop, and ingress reachability."
 }
 
 # =============================================================================
@@ -998,12 +1105,14 @@ vault_transit() {
     HAVE_TRANSIT_TOKEN=false
     HAVE_TRANSIT_POD=false
     HAVE_TRANSIT_SERVICE=false
+    local TRANSIT_POD_NAME
+    TRANSIT_POD_NAME="$(vault_transit_pod_name)"
     kubectl get secret vault-transit-token -n "$VAULT_NS" >/dev/null 2>&1 && HAVE_TRANSIT_TOKEN=true
-    kubectl get pod vault-transit-0 -n "$TRANSIT_NS" >/dev/null 2>&1 && HAVE_TRANSIT_POD=true
+    [ -n "$TRANSIT_POD_NAME" ] && HAVE_TRANSIT_POD=true
     kubectl get svc vault-transit -n "$TRANSIT_NS" >/dev/null 2>&1 && HAVE_TRANSIT_SERVICE=true
 
     if [ "$HAVE_TRANSIT_TOKEN" = "true" ] && [ "$HAVE_TRANSIT_POD" = "true" ] && [ "$HAVE_TRANSIT_SERVICE" = "true" ]; then
-        READY_STATUS=$(kubectl get pod vault-transit-0 -n "$TRANSIT_NS" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+        READY_STATUS=$(kubectl get pod "$TRANSIT_POD_NAME" -n "$TRANSIT_NS" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
         if [ "$READY_STATUS" = "Running" ]; then
             ok "vault-transit already installed — skipping"
             return 0
@@ -1011,7 +1120,7 @@ vault_transit() {
     fi
 
     # Broken partial state from a previous run needs cleanup before reinstall.
-    if helm status vault-transit -n "$TRANSIT_NS" >/dev/null 2>&1 || kubectl get pod vault-transit-0 -n "$TRANSIT_NS" >/dev/null 2>&1; then
+    if helm status vault-transit -n "$TRANSIT_NS" >/dev/null 2>&1 || [ -n "$TRANSIT_POD_NAME" ]; then
         info "Cleaning up broken vault-transit install..."
         helm uninstall vault-transit -n "$TRANSIT_NS" 2>/dev/null || true
         kubectl delete pvc -n "$TRANSIT_NS" --all --force --grace-period=0 --wait=false 2>/dev/null || true
@@ -1019,14 +1128,12 @@ vault_transit() {
         sleep 5
     fi
 
-    info "Installing vault-transit (standalone, Longhorn storage)..."
-    helm upgrade --install vault-transit hashicorp/vault \
+    [ -d "$TRANSIT_CHART_DIR" ] || die "Transit Vault chart not found: $TRANSIT_CHART_DIR"
+
+    info "Installing vault-transit from $TRANSIT_CHART_DIR..."
+    helm upgrade --install vault-transit "$TRANSIT_CHART_DIR" \
         --namespace "$TRANSIT_NS" \
-        --set "server.standalone.enabled=true" \
-        --set "server.ha.enabled=false" \
-        --set "server.dataStorage.storageClass=longhorn" \
-        --set "server.dataStorage.size=2Gi" \
-        --set "injector.enabled=false"
+        --create-namespace
 
     info "Waiting for vault-transit PVC to bind..."
     for i in $(seq 1 24); do
@@ -1038,21 +1145,27 @@ vault_transit() {
     kubectl get pvc -n "$TRANSIT_NS" | grep -q "Bound" || die "vault-transit PVC never bound"
     ok "PVC bound"
 
-    info "Waiting for vault-transit-0 to be Running..."
+    info "Waiting for vault-transit pod to be Running..."
     for i in $(seq 1 24); do
-        RUNNING=$(kubectl get pod vault-transit-0 -n "$TRANSIT_NS" 2>/dev/null \
-            | grep -c "Running" || true)
+        TRANSIT_POD_NAME="$(vault_transit_pod_name)"
+        RUNNING=0
+        if [ -n "$TRANSIT_POD_NAME" ]; then
+            RUNNING=$(kubectl get pod "$TRANSIT_POD_NAME" -n "$TRANSIT_NS" 2>/dev/null \
+                | grep -c "Running" || true)
+        fi
         [ "${RUNNING:-0}" -ge "1" ] && break
         info "[$i/24] waiting 10s..."
         sleep 10
     done
-    kubectl get pod vault-transit-0 -n "$TRANSIT_NS" 2>/dev/null | grep -q "Running" \
-        || die "vault-transit-0 never became Running"
-    ok "vault-transit-0 is Running"
+    TRANSIT_POD_NAME="$(vault_transit_pod_name)"
+    [ -n "$TRANSIT_POD_NAME" ] || die "vault-transit pod not found"
+    kubectl get pod "$TRANSIT_POD_NAME" -n "$TRANSIT_NS" 2>/dev/null | grep -q "Running" \
+        || die "vault-transit pod never became Running"
+    ok "$TRANSIT_POD_NAME is Running"
 
     info "Waiting for vault-transit API..."
     for i in $(seq 1 24); do
-        STATUS=$(kubectl exec -n "$TRANSIT_NS" vault-transit-0 \
+        STATUS=$(kubectl exec -n "$TRANSIT_NS" "$TRANSIT_POD_NAME" \
             -- vault status 2>/dev/null || echo "")
         echo "$STATUS" | grep -q "Initialized" && break
         info "[$i/24] waiting 5s..."
@@ -1060,12 +1173,12 @@ vault_transit() {
     done
 
     # Initialize
-    INITIALIZED=$(kubectl exec -n "$TRANSIT_NS" vault-transit-0 \
+    INITIALIZED=$(kubectl exec -n "$TRANSIT_NS" "$TRANSIT_POD_NAME" \
         -- vault status 2>/dev/null | grep "^Initialized" | awk '{print $2}' || echo "false")
 
     if [ "$INITIALIZED" = "false" ]; then
         info "Initializing vault-transit..."
-        kubectl exec -n "$TRANSIT_NS" vault-transit-0 \
+        kubectl exec -n "$TRANSIT_NS" "$TRANSIT_POD_NAME" \
             -- vault operator init \
                 -key-shares=1 -key-threshold=1 \
                 -format=json > vault-transit-init.json \
@@ -1076,33 +1189,51 @@ vault_transit() {
         ROOT_TOKEN=$(python3 -c \
             "import json; print(json.load(open('vault-transit-init.json'))['root_token'])")
 
-        kubectl exec -n "$TRANSIT_NS" vault-transit-0 \
+        kubectl exec -n "$TRANSIT_NS" "$TRANSIT_POD_NAME" \
             -- vault operator unseal "$UNSEAL_KEY" || die "unseal failed"
         ok "vault-transit initialized and unsealed"
     else
         info "Already initialized, reading tokens..."
-        [ -f vault-transit-init.json ] || die "vault-transit-init.json missing — cannot continue"
-        UNSEAL_KEY=$(python3 -c \
-            "import json; print(json.load(open('vault-transit-init.json'))['unseal_keys_b64'][0])")
-        ROOT_TOKEN=$(python3 -c \
-            "import json; print(json.load(open('vault-transit-init.json'))['root_token'])")
-        kubectl exec -n "$TRANSIT_NS" vault-transit-0 \
+        if [ -f vault-transit-init.json ]; then
+            UNSEAL_KEY=$(python3 -c \
+                "import json; print(json.load(open('vault-transit-init.json'))['unseal_keys_b64'][0])")
+            ROOT_TOKEN=$(python3 -c \
+                "import json; print(json.load(open('vault-transit-init.json'))['root_token'])")
+        else
+            UNSEAL_KEY=$(vault_transit_secret_value vault-transit-init unseal-key-1)
+            ROOT_TOKEN=$(vault_transit_secret_value vault-transit-init root-token)
+            [ -n "$UNSEAL_KEY" ] || die "vault-transit-init secret missing unseal-key-1"
+            [ -n "$ROOT_TOKEN" ] || die "vault-transit-init secret missing root-token"
+        fi
+        kubectl exec -n "$TRANSIT_NS" "$TRANSIT_POD_NAME" \
             -- vault operator unseal "$UNSEAL_KEY" 2>/dev/null || true
     fi
 
     # Verify unsealed
-    kubectl exec -n "$TRANSIT_NS" vault-transit-0 \
+    kubectl exec -n "$TRANSIT_NS" "$TRANSIT_POD_NAME" \
         -- vault status 2>/dev/null | grep "^Sealed" | grep -q "false" \
         || die "vault-transit is still sealed"
 
+    # If the stored root token no longer works, recover a fresh one from the
+    # saved unseal keys so reruns stay idempotent even after token revocation.
+    if ! kubectl exec -n "$TRANSIT_NS" "$TRANSIT_POD_NAME" \
+        -- sh -c "VAULT_TOKEN=$ROOT_TOKEN vault token lookup >/dev/null 2>&1"; then
+        info "Stored transit root token is no longer valid; regenerating a fresh root token..."
+        UNSEAL_KEY_1="$(vault_transit_secret_value vault-transit-init unseal-key-1)"
+        UNSEAL_KEY_2="$(vault_transit_secret_value vault-transit-init unseal-key-2)"
+        UNSEAL_KEY_3="$(vault_transit_secret_value vault-transit-init unseal-key-3)"
+        ROOT_TOKEN="$(vault_transit_regenerate_root_token "$TRANSIT_POD_NAME" "$UNSEAL_KEY_1" "$UNSEAL_KEY_2" "$UNSEAL_KEY_3")"
+        [ -n "$ROOT_TOKEN" ] || die "failed to regenerate transit root token"
+    fi
+
     # Configure transit
-    kubectl exec -n "$TRANSIT_NS" vault-transit-0 \
+    kubectl exec -n "$TRANSIT_NS" "$TRANSIT_POD_NAME" \
         -- sh -c "VAULT_TOKEN=$ROOT_TOKEN vault secrets enable transit" 2>/dev/null || true
-    kubectl exec -n "$TRANSIT_NS" vault-transit-0 \
+    kubectl exec -n "$TRANSIT_NS" "$TRANSIT_POD_NAME" \
         -- sh -c "VAULT_TOKEN=$ROOT_TOKEN vault write -f transit/keys/unseal-key" 2>/dev/null || true
 
     # Create policy
-    kubectl exec -n "$TRANSIT_NS" vault-transit-0 -- sh -c \
+    kubectl exec -n "$TRANSIT_NS" "$TRANSIT_POD_NAME" -- sh -c \
         "VAULT_TOKEN=$ROOT_TOKEN vault policy write vault-unseal-policy - << 'POLICY'
 path \"transit/encrypt/unseal-key\" { capabilities = [\"update\"] }
 path \"transit/decrypt/unseal-key\" { capabilities = [\"update\"] }
@@ -1112,7 +1243,7 @@ POLICY"
     # NOTE: -period=0 does NOT mean non-expiring; it falls back to system default TTL
     # and the token will expire (causing 403 "invalid token" on Vault restart).
     # -ttl=0 with -explicit-max-ttl=0 means no expiry ever.
-    TRANSIT_TOKEN=$(kubectl exec -n "$TRANSIT_NS" vault-transit-0 -- sh -c \
+    TRANSIT_TOKEN=$(kubectl exec -n "$TRANSIT_NS" "$TRANSIT_POD_NAME" -- sh -c \
         "VAULT_TOKEN=$ROOT_TOKEN vault token create \
             -policy=vault-unseal-policy \
             -ttl=0 \
@@ -1157,11 +1288,11 @@ vault_install() {
     if [ "$STATUS" = "deployed" ]; then
         RUNNING=$(kubectl get pods -n "$VAULT_NS" 2>/dev/null \
             | grep "vault-[012]" | grep -c "Running" || true)
-        if [ "${RUNNING:-0}" -ge "1" ]; then
-            ok "Vault already installed — skipping helm install"
+        if [ "${RUNNING:-0}" -ge "1" ] && kubectl get clustersecretstore vault-backend >/dev/null 2>&1; then
+            ok "Vault already installed and ClusterSecretStore present — skipping helm install"
             return 0
         fi
-        info "Vault release is deployed but pods are not healthy enough to use; reinstalling..."
+        info "Vault release is deployed but the ClusterSecretStore is missing or pods are not healthy enough to use; reinstalling..."
         helm uninstall vault -n "$VAULT_NS" 2>/dev/null || true
         kubectl delete pvc -n "$VAULT_NS" --all --force --grace-period=0 --wait=false 2>/dev/null || true
         sleep 5
@@ -1173,6 +1304,7 @@ vault_install() {
         sleep 5
     }
 
+    info "Installing main Vault from hashicorp/vault..."
     helm upgrade --install vault hashicorp/vault \
         --namespace "$VAULT_NS" \
         --create-namespace \
@@ -1206,6 +1338,28 @@ vault_install() {
 }
 
 # =============================================================================
+# STEP 7 — VAULT CONFIGURE (ClusterSecretStore + secret sync)
+# =============================================================================
+vault_configure() {
+    log "[7/8] Installing Vault bootstrap/config chart..."
+
+    [ -d "$VAULT_CHART_DIR" ] || die "Vault chart not found: $VAULT_CHART_DIR"
+    kubectl get secret "${VAULT_CONFIG_RELEASE}-vault-root-token" -n "$VAULT_NS" >/dev/null 2>&1 \
+        || die "${VAULT_CONFIG_RELEASE}-vault-root-token not found — run: ./setup.sh vault_init"
+
+    helm upgrade --install "$VAULT_CONFIG_RELEASE" "$VAULT_CHART_DIR" \
+        --namespace "$VAULT_NS" \
+        --create-namespace \
+        --wait --timeout 10m \
+        || die "Vault bootstrap chart install failed"
+
+    kubectl wait --for=condition=Ready clustersecretstore/vault-backend --timeout=180s >/dev/null 2>&1 \
+        || die "Vault ClusterSecretStore did not become Ready"
+
+    ok "Vault bootstrap/config installed"
+}
+
+# =============================================================================
 # STEP 6 — VAULT INIT
 # =============================================================================
 vault_init() {
@@ -1215,9 +1369,11 @@ vault_init() {
     info "Waiting for a Vault pod API..."
     for i in $(seq 1 40); do
         VAULT_INIT_POD="$(select_vault_pod)"
-        STATUS=$(kubectl exec -n "$VAULT_NS" "$VAULT_INIT_POD" \
-            -- vault status 2>/dev/null || echo "")
-        echo "$STATUS" | grep -q "Initialized" && { ok "API ready on $VAULT_INIT_POD"; break; }
+        STATUS="$(vault_status_json "$VAULT_INIT_POD")"
+        if [ -n "$STATUS" ] && printf '%s' "$STATUS" | python3 -c 'import json,sys; json.load(sys.stdin)' >/dev/null 2>&1; then
+            ok "API ready on $VAULT_INIT_POD"
+            break
+        fi
         info "[$i/40] not ready, waiting 5s..."
         sleep 5
         [ "$i" = "40" ] && {
@@ -1228,13 +1384,11 @@ vault_init() {
 
     [ -n "$VAULT_INIT_POD" ] || die "No running Vault pod found for initialization"
 
-    INITIALIZED=$(kubectl exec -n "$VAULT_NS" "$VAULT_INIT_POD" \
-        -- vault status 2>/dev/null | grep "^Initialized" | awk '{print $2}' || echo "false")
+    INITIALIZED="$(vault_status_json "$VAULT_INIT_POD" | python3 -c 'import json,sys; print(str(json.load(sys.stdin).get("initialized", False)).lower())' 2>/dev/null || echo "false")"
 
     if [ "$INITIALIZED" = "true" ]; then
         ok "Vault already initialized"
-        SEALED=$(kubectl exec -n "$VAULT_NS" "$VAULT_INIT_POD" \
-            -- vault status 2>/dev/null | grep "^Sealed" | awk '{print $2}' || echo "true")
+        SEALED="$(vault_status_json "$VAULT_INIT_POD" | python3 -c 'import json,sys; print(str(json.load(sys.stdin).get("sealed", True)).lower())' 2>/dev/null || echo "true")"
         [ "$SEALED" = "false" ] && { ok "Already unsealed"; return 0; }
         info "Sealed — transit should auto-unseal within 30s..."
         sleep 30
@@ -1261,9 +1415,8 @@ vault_init() {
     for i in $(seq 1 12); do
         ALL_OK=true
         for pod in vault-0 vault-1 vault-2; do
-            SEALED=$(kubectl exec -n "$VAULT_NS" "$pod" \
-                -- vault status 2>/dev/null \
-                | grep "^Sealed" | awk '{print $2}' || echo "true")
+            SEALED="$(kubectl exec -n "$VAULT_NS" "$pod" -- vault status -format=json 2>/dev/null \
+                | python3 -c 'import json,sys; print(str(json.load(sys.stdin).get("sealed", True)).lower())' 2>/dev/null || echo "true")"
             info "$pod: sealed=$SEALED"
             [ "$SEALED" != "false" ] && ALL_OK=false
         done
@@ -1281,6 +1434,16 @@ vault_init() {
     kubectl create secret generic "${RELEASE}-vault-root-token" \
         --from-literal=token="$ROOT_TOKEN" \
         --namespace "$NAMESPACE" \
+        --dry-run=client -o yaml | kubectl apply -f -
+
+    kubectl create secret generic vault-root-token \
+        --from-literal=token="$ROOT_TOKEN" \
+        --namespace "$VAULT_NS" \
+        --dry-run=client -o yaml | kubectl apply -f -
+
+    kubectl create secret generic "${VAULT_CONFIG_RELEASE}-vault-root-token" \
+        --from-literal=token="$ROOT_TOKEN" \
+        --namespace "$VAULT_NS" \
         --dry-run=client -o yaml | kubectl apply -f -
 
     wait_for_pods_ready "$VAULT_NS" "app.kubernetes.io/name=vault,component=server" 30 10 "Vault pods" \
@@ -1376,8 +1539,18 @@ deploy() {
         --timeout 10m \
         || die "db-cluster chart deploy failed"
 
-    kubectl wait --for=condition=Ready clustersecretstore/vault-backend --timeout=180s >/dev/null 2>&1 \
-        || die "Vault ClusterSecretStore did not become Ready"
+    if ! kubectl get clustersecretstore vault-backend >/dev/null 2>&1; then
+        echo ""
+        kubectl get clustersecretstore 2>/dev/null || true
+        die "Vault ClusterSecretStore vault-backend is missing. Run ./setup.sh vault_transit and ./setup.sh vault_install, or rerun ./setup.sh."
+    fi
+
+    if ! kubectl wait --for=condition=Ready clustersecretstore/vault-backend --timeout=180s >/dev/null 2>&1; then
+        echo ""
+        kubectl describe clustersecretstore vault-backend 2>/dev/null || true
+        die "Vault ClusterSecretStore vault-backend exists but is not Ready. Check the vault namespace for the vault setup job, the vault-root-token secret, and the vault-transit-token secret."
+    fi
+
     local ENABLED_DBS
     ENABLED_DBS="$(enabled_databases)"
     for db in $ENABLED_DBS; do
@@ -1449,10 +1622,11 @@ setup() {
     ingress_nginx   || die "Step ingress_nginx failed"
     longhorn        || die "Step longhorn failed"
     deps            || die "Step deps failed"
+    install_operators || die "Step install_operators failed"
     vault_transit   || die "Step vault_transit failed"
     vault_install   || die "Step vault_install failed"
     vault_init      || die "Step vault_init failed"
-    install_operators || die "Step install_operators failed"
+    vault_configure || die "Step vault_configure failed"
     operator_plugins || die "Step operator_plugins failed"
     deploy          || die "Step deploy failed"
 
@@ -1501,7 +1675,9 @@ clusters() {
 
 vault_status() {
     echo "━━━ Transit Vault ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    kubectl exec -n "$TRANSIT_NS" vault-transit-0 -- vault status 2>/dev/null || echo "  not ready"
+    local TRANSIT_POD_NAME
+    TRANSIT_POD_NAME="$(vault_transit_pod_name)"
+    [ -n "$TRANSIT_POD_NAME" ] && kubectl exec -n "$TRANSIT_NS" "$TRANSIT_POD_NAME" -- vault status 2>/dev/null || echo "  not ready"
     echo ""
     for pod in vault-0 vault-1 vault-2; do
         echo "━━━ $pod ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

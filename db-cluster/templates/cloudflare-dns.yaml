@@ -15,12 +15,6 @@
 {{- if .Values.cassandra.enabled }}
 {{- $allHosts = concat $allHosts (.Values.cassandra.externalAccess.publicHostnames | default list) -}}
 {{- end }}
-{{- if and .Values.longhorn.enabled .Values.longhorn.ingress.enabled .Values.longhorn.ingress.host }}
-{{- $allHosts = concat $allHosts (list .Values.longhorn.ingress.host) -}}
-{{- end }}
-{{- if and .Values.vault.enabled .Values.vault.ingress.enabled .Values.vault.ingress.host }}
-{{- $allHosts = concat $allHosts (list .Values.vault.ingress.host) -}}
-{{- end }}
 {{- if not .Values.cloudflare.apiTokenExistingSecret }}
 apiVersion: v1
 kind: Secret

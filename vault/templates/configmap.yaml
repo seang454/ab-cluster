@@ -27,10 +27,6 @@ data:
       capabilities = ["read", "list"]
     }
 
-  # FIX 1: Template paths now correctly reference .Values.postgresql.*
-  # which is the vault subchart's own values — matching vault/values.yaml exactly.
-  # The parent chart overrides vault.secrets.* which Helm maps to .Values.postgresql.*
-  # inside this subchart context.
   setup.sh: |
     #!/bin/sh
     set -e
@@ -81,7 +77,6 @@ data:
     echo "==> Writing policy..."
     vault policy write db-policy /vault/policies/db-policy.hcl
 
-    # FIX 4: bound_service_account_names locked to ESO service account only
     echo "==> Writing role (locked to ESO service account)..."
     vault write auth/kubernetes/role/db-role \
       bound_service_account_names="{{ include "vault.serviceAccountName" . }}" \

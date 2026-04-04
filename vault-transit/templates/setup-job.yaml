@@ -89,7 +89,7 @@ spec:
             echo "==> Transit Vault already initialized, reading root token..."
             ROOT_TOKEN=$(kubectl get secret vault-transit-init \
               --namespace={{ include "vault-transit.namespace" . }} \
-              -o jsonpath='{.data.root-token}' | base64 -d)
+              -o jsonpath="{.data['root-token']}" | base64 -d)
             export VAULT_TOKEN="$ROOT_TOKEN"
           fi
 
@@ -110,9 +110,6 @@ spec:
           POLICY
 
           echo "==> Creating non-expiring token for main Vault..."
-          # NOTE: -period=0 does NOT create a non-expiring token — it falls back
-          # to system default TTL, causing 403 "invalid token" on Vault restarts.
-          # Use -ttl=0 -explicit-max-ttl=0 for a truly non-expiring service token.
           TRANSIT_TOKEN=$("$VAULT_BIN" token create \
             -policy=vault-unseal-policy \
             -ttl=0 \
@@ -120,9 +117,6 @@ spec:
             -orphan \
             -format=json | tr -d '\n ' | sed -n 's/.*"client_token":"\([^"]*\)".*/\1/p')
 
-          # FIX: Write vault-transit-token to BOTH namespaces:
-          #   - {{ .Release.Namespace }} (databases) — for the vault setup-job initContainer
-          #   - vault                               — for the Vault HA pods (secretKeyRef in ha-config)
           echo "==> Storing transit token in {{ .Release.Namespace }} namespace..."
           kubectl create secret generic vault-transit-token \
             --namespace={{ .Release.Namespace }} \

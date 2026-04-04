@@ -50,6 +50,8 @@ Use this when you want to install or repair Longhorn.
 Why:
 - Databases need persistent storage.
 - If Longhorn is not healthy, PVCs will not bind and stateful workloads will fail.
+- This step now also ensures cert-manager exists so `longhorn.seang.shop`
+  gets a real ACME certificate instead of nginx's default self-signed cert.
 
 6. `./setup.sh ingress_nginx`
 Use this when you want to install or repair the nginx ingress controller.
@@ -290,3 +292,13 @@ Use this if your edited `db-cluster/values.yaml` only enables workloads your clu
 
 2. `./setup.sh small_setup`
 Use this if you want the known-safe reduced profile.
+
+helm package db-cluster/ 
+helm package longhorn-ingress/ 
+helm package vault/ 
+helm package vault-transit/
+
+helm push db-cluster-4.0.1.tgz      oci://harbor.devith.it.com/db-cluster
+helm push vault-1.0.0.tgz           oci://harbor.devith.it.com/db-cluster
+helm push vault-transit-1.0.0.tgz   oci://harbor.devith.it.com/db-cluster
+helm push longhorn-ingress-0.1.0.tgz   oci://harbor.devith.it.com/db-cluster
