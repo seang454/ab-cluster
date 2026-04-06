@@ -15,6 +15,8 @@ You do not always want to reinstall everything. Sometimes you only want to fix o
 
 1. `./setup.sh`
 Use this for the normal end-to-end install with the current `db-cluster/values.yaml`.
+If that file leaves every database disabled, `setup.sh` automatically layers
+`db-cluster/values.full-cluster.yaml` on top so the database clusters still deploy.
 
 Why:
 - It runs the stack in the correct order.

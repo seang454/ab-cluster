@@ -99,6 +99,10 @@ profile_values_files() {
     fi
 }
 
+active_databases() {
+    enabled_databases
+}
+
 profile_label() {
     local DEFAULT_VALUES="$CHART_DIR/values.yaml"
     if [ -n "$VALUES_FILE" ] && [ "$VALUES_FILE" != "$DEFAULT_VALUES" ]; then
@@ -1616,6 +1620,15 @@ setup() {
     echo " db-cluster setup starting..."
     echo "============================================="
 
+    if [ -z "$VALUES_FILE" ]; then
+        local ACTIVE_DBS
+        ACTIVE_DBS="$(active_databases)"
+        if [ -z "$ACTIVE_DBS" ]; then
+            VALUES_FILE="$CHART_DIR/values.full-cluster.yaml"
+            info "Default values disable all databases; using $VALUES_FILE so setup deploys the full stack."
+        fi
+    fi
+
     require_real_passwords
     preflight       || die "Step preflight failed"
     repos           || die "Step repos failed"
@@ -1999,6 +2012,8 @@ usage() {
     echo ""
     echo "1. setup"
     echo "   Run the normal full install using db-cluster/values.yaml."
+    echo "   If that file leaves every database disabled, setup overlays"
+    echo "   db-cluster/values.full-cluster.yaml so the database clusters are still deployed."
     echo "   Why install it: this platform depends on ordered layers."
     echo "   Storage must exist before PVC workloads, Vault must exist before secret sync,"
     echo "   and operators must exist before database custom resources can reconcile."

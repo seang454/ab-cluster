@@ -1,0 +1,28 @@
+# Full-install override for the default profile.
+# This is layered on top of db-cluster/values.yaml when you want the
+# complete stack deployed even though the base file keeps databases disabled.
+
+postgresql:
+  enabled: true
+  operator:
+    enabled: true
+
+mongodb:
+  enabled: true
+  operator:
+    enabled: true
+
+mysql:
+  enabled: true
+  operator:
+    enabled: true
+
+redis:
+  enabled: true
+  operator:
+    enabled: true
+
+cassandra:
+  enabled: true
+  operator:
+    enabled: true
