@@ -36,7 +36,7 @@ spec:
         - -c
         - |
           set -e
-          export VAULT_ADDR="http://{{ include "vault-transit.fullname" . }}.{{ include "vault-transit.namespace" . }}.svc.cluster.local:8200"
+          export VAULT_ADDR="http://{{ include "vault-transit.fullname" . }}.{{ include "vault-transit.namespace" . }}.svc:8200"
           VAULT_BIN="/tools/vault"
 
           echo "==> Waiting for transit Vault to be ready..."

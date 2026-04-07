@@ -51,7 +51,7 @@ server:
         # For transit seal, Vault reads the token from VAULT_TOKEN.
         # Keep the token out of the HCL config and inject it via the secret below.
         seal "transit" {
-          address    = "http://vault-transit-vault-transit.vault-transit.svc.cluster.local:8200"
+          address    = "http://vault-transit-vault-transit.vault-transit.svc:8200"
           mount_path = "transit"
           key_name   = "unseal-key"
         }

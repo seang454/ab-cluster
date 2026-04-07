@@ -501,6 +501,132 @@ print(f"{total_cpu}\t{total_mem}")
 PY
 }
 
+required_profile_resource_breakdown() {
+    local PROFILE_FILES=()
+    validate_profile_values
+    mapfile -t PROFILE_FILES < <(profile_values_files)
+
+    python3 - "${PROFILE_FILES[@]}" <<'PY'
+import re
+import sys
+
+dbs = ["postgresql", "mongodb", "mysql", "redis", "cassandra"]
+data = {db: {"enabled": False, "instances": 0, "cpu_m": 0, "mem_mib": 0} for db in dbs}
+
+section = None
+in_cluster = False
+in_resources = False
+in_requests = False
+
+def cpu_to_millis(value: str) -> int:
+    value = value.strip().strip('"').strip("'")
+    if not value:
+        return 0
+    if value.endswith("m"):
+        return int(value[:-1])
+    return int(float(value) * 1000)
+
+def mem_to_mib(value: str) -> int:
+    value = value.strip().strip('"').strip("'")
+    if not value:
+        return 0
+    units = {
+        "Ki": 1 / 1024,
+        "Mi": 1,
+        "Gi": 1024,
+        "Ti": 1024 * 1024,
+        "K": 1000 / (1024 * 1024),
+        "M": 1000 * 1000 / (1024 * 1024),
+        "G": 1000 * 1000 * 1000 / (1024 * 1024),
+    }
+    for suffix, factor in units.items():
+        if value.endswith(suffix):
+            return int(float(value[:-len(suffix)]) * factor)
+    return int(float(value) / (1024 * 1024))
+
+for path in sys.argv[1:]:
+    lines = open(path, "r", encoding="utf-8").read().splitlines()
+    section = None
+    in_cluster = False
+    in_resources = False
+    in_requests = False
+
+    for raw in lines:
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+
+        indent = len(raw) - len(raw.lstrip(" "))
+        line = raw.strip()
+
+        m = re.match(r"([A-Za-z0-9_]+):\s*(.*)$", line)
+        if indent == 0 and m and m.group(1) in dbs:
+            section = m.group(1)
+            in_cluster = False
+            in_resources = False
+            in_requests = False
+            continue
+
+        if section is None:
+            continue
+
+        if indent <= 1:
+            in_cluster = False
+            in_resources = False
+            in_requests = False
+
+        if indent == 2 and line.startswith("enabled:"):
+            data[section]["enabled"] = line.split(":", 1)[1].strip().lower() == "true"
+            continue
+
+        if indent == 2 and line.startswith("cluster:"):
+            in_cluster = True
+            in_resources = False
+            in_requests = False
+            continue
+
+        if indent <= 2 and not line.startswith("cluster:"):
+            in_cluster = False
+            in_resources = False
+            in_requests = False
+
+        if not in_cluster:
+            continue
+
+        if indent == 4 and line.startswith("instances:"):
+            data[section]["instances"] = int(line.split(":", 1)[1].strip().strip('"').strip("'"))
+            continue
+
+        if indent == 4 and line.startswith("resources:"):
+            in_resources = True
+            in_requests = False
+            continue
+
+        if indent <= 4 and not line.startswith("resources:"):
+            in_resources = False
+            in_requests = False
+
+        if in_resources and indent == 6 and line.startswith("requests:"):
+            in_requests = True
+            continue
+
+        if in_resources and indent <= 6 and not line.startswith("requests:"):
+            in_requests = False
+
+        if in_requests and indent == 8 and line.startswith("cpu:"):
+            data[section]["cpu_m"] = cpu_to_millis(line.split(":", 1)[1])
+        if in_requests and indent == 8 and line.startswith("memory:"):
+            data[section]["mem_mib"] = mem_to_mib(line.split(":", 1)[1])
+
+for db in dbs:
+    cfg = data[db]
+    if not cfg["enabled"]:
+        continue
+    total_cpu = cfg["instances"] * cfg["cpu_m"]
+    total_mem = cfg["instances"] * cfg["mem_mib"]
+    print(f"{db}\t{cfg['instances']}\t{cfg['cpu_m']}\t{cfg['mem_mib']}\t{total_cpu}\t{total_mem}")
+PY
+}
+
 profile_schedulability_report() {
     local PROFILE_FILES=()
     validate_profile_values
@@ -785,14 +911,24 @@ preflight() {
     kubectl version --client >/dev/null 2>&1 || die "kubectl is not working"
     kubectl get nodes >/dev/null 2>&1 || die "Cannot reach the Kubernetes API"
 
-    local PROFILE_LABEL REQUIRED_CPU REQUIRED_MEM
+    local PROFILE_LABEL REQUIRED_CPU REQUIRED_MEM ENABLED DBS_LINE
     local TOTAL_ALLOC_CPU TOTAL_ALLOC_MEM TOTAL_REQ_CPU TOTAL_REQ_MEM TOTAL_AVAIL_CPU TOTAL_AVAIL_MEM
     local RESOURCES_LINE SCHED_ISSUES
     PROFILE_LABEL="$(profile_label)"
+    ENABLED="$(enabled_databases)"
     IFS=$'\t' read -r REQUIRED_CPU REQUIRED_MEM <<<"$(required_profile_resources)"
+    DBS_LINE="$(required_profile_resource_breakdown)"
     RESOURCES_LINE="$(schedulable_worker_report)" || die "Failed to inspect schedulable node resources"
 
     info "Selected values profile: $PROFILE_LABEL"
+    info "Enabled databases after merge: ${ENABLED:-none}"
+    if [ -n "$DBS_LINE" ]; then
+        echo "    Requested resources by enabled database:"
+        while IFS=$'\t' read -r DB INSTANCES CPU_EACH MEM_EACH CPU_TOTAL MEM_TOTAL; do
+            [ -n "$DB" ] || continue
+            echo "    - $DB: instances=$INSTANCES, each=${CPU_EACH}m/${MEM_EACH}Mi, total=${CPU_TOTAL}m/${MEM_TOTAL}Mi"
+        done <<< "$DBS_LINE"
+    fi
     echo "    Schedulable untainted nodes:"
     while IFS=$'\t' read -r NODE ALLOC_CPU ALLOC_MEM REQ_CPU REQ_MEM AVAIL_CPU AVAIL_MEM; do
         [ -n "$NODE" ] || continue
@@ -874,11 +1010,17 @@ repos() {
 
 ingress_nginx() {
     log "[optional] Installing ingress-nginx controller..."
+    local INGRESS_NGINX_WORKLOADS=""
+    INGRESS_NGINX_WORKLOADS="$(kubectl get deployment,daemonset -A -l app.kubernetes.io/name=ingress-nginx \
+        -o name 2>/dev/null || true)"
+
     if helm status ingress-nginx -n ingress-nginx >/dev/null 2>&1; then
         info "ingress-nginx already installed — reconciling desired config"
-    elif kubectl get ingressclass nginx >/dev/null 2>&1; then
-        ok "IngressClass nginx already exists — skipping"
+    elif [ -n "$INGRESS_NGINX_WORKLOADS" ]; then
+        ok "An ingress-nginx controller workload already exists — skipping"
         return 0
+    elif kubectl get ingressclass nginx >/dev/null 2>&1; then
+        info "IngressClass nginx exists but no ingress-nginx controller workload was found; installing controller"
     fi
 
     helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
@@ -1080,6 +1222,15 @@ EOF
         if kubectl get secret longhorn-tls -n longhorn-system >/dev/null 2>&1; then
             ok "Longhorn TLS secret is ready"
             return 0
+        fi
+        if ! kubectl get clusterissuer letsencrypt-prod >/dev/null 2>&1; then
+            die "Longhorn TLS secret was not issued because ClusterIssuer letsencrypt-prod does not exist."
+        fi
+        challenge_reason="$(kubectl get challenge -n longhorn-system \
+            -o jsonpath='{range .items[?(@.spec.dnsName=="longhorn.seang.shop")]}{.status.reason}{"\n"}{end}' \
+            2>/dev/null | head -n 1)"
+        if [ -n "$challenge_reason" ]; then
+            info "cert-manager challenge status: $challenge_reason"
         fi
         sleep 10
     done
@@ -1378,6 +1529,10 @@ vault_init() {
             ok "API ready on $VAULT_INIT_POD"
             break
         fi
+        if kubectl get pods -n "$VAULT_NS" 2>/dev/null | grep -E 'vault-[0-2].*(CrashLoopBackOff|Error)'; then
+            [ -n "$VAULT_INIT_POD" ] && kubectl logs "$VAULT_INIT_POD" -n "$VAULT_NS" --previous --tail=50 2>/dev/null || true
+            die "Vault pod is crashing before the API becomes ready"
+        fi
         info "[$i/40] not ready, waiting 5s..."
         sleep 5
         [ "$i" = "40" ] && {
@@ -1620,15 +1775,6 @@ setup() {
     echo " db-cluster setup starting..."
     echo "============================================="
 
-    if [ -z "$VALUES_FILE" ]; then
-        local ACTIVE_DBS
-        ACTIVE_DBS="$(active_databases)"
-        if [ -z "$ACTIVE_DBS" ]; then
-            VALUES_FILE="$CHART_DIR/values.full-cluster.yaml"
-            info "Default values disable all databases; using $VALUES_FILE so setup deploys the full stack."
-        fi
-    fi
-
     require_real_passwords
     preflight       || die "Step preflight failed"
     repos           || die "Step repos failed"
@@ -1839,7 +1985,7 @@ teardown() {
 
     # ── 2. Remove ALL PVC/PV finalizers BEFORE uninstalling anything ──────
     log "[2/8] Removing PVC and PV finalizers..."
-    ALL_NS="$NAMESPACE $VAULT_NS $TRANSIT_NS longhorn-system external-secrets cnpg-system ingress-nginx traefik"
+    ALL_NS="$NAMESPACE $VAULT_NS $TRANSIT_NS longhorn-system external-secrets cnpg-system traefik"
     for ns in $ALL_NS; do
         for pvc in $(kubectl get pvc -n "$ns" -o name --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null); do
             kubectl patch "$pvc" -n "$ns"                 -p '{"metadata":{"finalizers":[]}}' --type=merge --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null || true
@@ -1875,7 +2021,6 @@ teardown() {
     helm uninstall pxc-operator     -n "$NAMESPACE"     2>/dev/null || true
     helm uninstall redis-operator   -n "$NAMESPACE"     2>/dev/null || true
     helm uninstall k8ssandra-operator -n "$NAMESPACE"   2>/dev/null || true
-    helm uninstall ingress-nginx    -n ingress-nginx    2>/dev/null || true
     helm uninstall traefik          -n traefik          2>/dev/null || true
     helm uninstall longhorn         -n longhorn-system  2>/dev/null || true
     ok "Helm releases uninstalled"
@@ -1901,7 +2046,7 @@ teardown() {
 
     # ── 7. Delete all namespaces ──────────────────────────────────────────
     log "[7/8] Deleting namespaces..."
-    for ns in "$NAMESPACE" "$VAULT_NS" "$TRANSIT_NS"               external-secrets cnpg-system longhorn-system ingress-nginx traefik; do
+    for ns in "$NAMESPACE" "$VAULT_NS" "$TRANSIT_NS"               external-secrets cnpg-system longhorn-system traefik; do
         # Final PVC sweep
         for pvc in $(kubectl get pvc -n "$ns" -o name --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null); do
             kubectl patch "$pvc" -n "$ns"                 -p '{"metadata":{"finalizers":[]}}' --type=merge --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null || true
@@ -1931,7 +2076,7 @@ teardown() {
 
     echo ""
     echo "  Remaining namespaces:"
-    NS_LEFT=$(kubectl get namespace --no-headers 2>/dev/null |         grep -E "^vault|^databases|^longhorn|^external-secrets|^cnpg|^ingress-nginx|^traefik" || true)
+    NS_LEFT=$(kubectl get namespace --no-headers 2>/dev/null |         grep -E "^vault|^databases|^longhorn|^external-secrets|^cnpg|^traefik" || true)
     [ -n "$NS_LEFT" ] && echo "$NS_LEFT" || echo "    none ✓"
 
     echo ""
@@ -1974,7 +2119,7 @@ teardownremain() {
 
     log "[3/5] Deleting leftover cluster-scoped CRDs, RBAC, stores, and webhooks..."
     kubectl delete clustersecretstore vault-backend --ignore-not-found --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null || true
-    for obj in $(kubectl get clusterrole,clusterrolebinding,validatingwebhookconfiguration,mutatingwebhookconfiguration --no-headers --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null | awk '{print $1}' | grep -E 'external-secrets|cnpg|percona|psmdb|pxc|redis-operator|k8ssandra|longhorn|ingress-nginx|traefik|vault' || true); do
+    for obj in $(kubectl get clusterrole,clusterrolebinding,validatingwebhookconfiguration,mutatingwebhookconfiguration --no-headers --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null | awk '{print $1}' | grep -E 'external-secrets|cnpg|percona|psmdb|pxc|redis-operator|k8ssandra|longhorn|traefik|vault' || true); do
         kubectl delete "$obj" --ignore-not-found --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null || true
     done
     for crd in $(kubectl get crd --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null | grep -E "longhorn|cnpg|percona|psmdb|pxc|external-secrets|externalsecrets|clustersecretstores|redis\\.opstreelabs|k8ssandra|cassandradatacenters|cassandratasks|clientconfigs" | awk '{print $1}'); do
@@ -2011,9 +2156,8 @@ usage() {
     echo "Default: edit db-cluster/values.yaml, then run ./setup.sh"
     echo ""
     echo "1. setup"
-    echo "   Run the normal full install using db-cluster/values.yaml."
-    echo "   If that file leaves every database disabled, setup overlays"
-    echo "   db-cluster/values.full-cluster.yaml so the database clusters are still deployed."
+    echo "   Run the install using the databases explicitly enabled in db-cluster/values.yaml."
+    echo "   To use another profile, pass VALUES_FILE=... when running setup."
     echo "   Why install it: this platform depends on ordered layers."
     echo "   Storage must exist before PVC workloads, Vault must exist before secret sync,"
     echo "   and operators must exist before database custom resources can reconcile."
