@@ -173,11 +173,41 @@ postgresql:
       size: 2Gi
 
   backup:
-    # Backups are off by default to avoid writing to an unset object store.
-    enabled: false
-    destinationPath: "s3://your-bucket/postgresql"
+    # Default backup target is the MinIO release installed by setup.sh.
+    enabled: true
+    # Supported providers in this chart: s3, gcs
+    provider: s3
+    destinationPath: "s3://postgresql-backups/postgresql"
+    # Use endpointURL for S3-compatible targets such as MinIO.
+    endpointURL: "http://my-minio-minio.storage.svc.cluster.local:9000"
+    # Optional CA bundle secret for private/self-signed HTTPS endpoints.
+    endpointCA:
+      secretName: ""
+      secretKey: ca.crt
+    # Used when provider=gcs.
     credentialSecret: "gcs-credentials"
+    # Used when provider=s3.
+    s3Credentials:
+      accessKeyId:
+        secretName: "minio-credentials"
+        key: root-user
+      secretAccessKey:
+        secretName: "minio-credentials"
+        key: root-password
+      region:
+        secretName: ""
+        key: region
     retentionPolicy: "7d"
+    schedule:
+      enabled: true
+      # CloudNativePG uses a 6-field cron format with seconds.
+      # Daily at 02:00 UTC: 0 0 2 * * *
+      # Every 6 hours:      0 0 */6 * * *
+      # Weekly at Sun 03:00 UTC: 0 0 3 * * 0
+      cron: "0 * * * * *"
+      immediate: false
+      suspend: false
+      backupOwnerReference: self
 
 # =============================================================================
 # MONGODB — Percona Operator for MongoDB
@@ -279,12 +309,19 @@ mongodb:
     storageClass: longhorn
 
   backup:
-    # Disabled until an S3 bucket and credentials are actually provided.
-    enabled: false
+    # Percona backup jobs write to the same MinIO bucket using a MongoDB prefix.
+    enabled: true
+    storageType: minio
+    task:
+      name: daily-backup
+      schedule: "10 2 * * *"
+      compressionType: gzip
     s3:
-      bucket: your-bucket
+      bucket: postgresql-backups
       region: us-east-1
-      credentialSecret: "aws-s3-secret"
+      credentialSecret: "minio-backup-credentials"
+      endpointURL: "http://my-minio-minio.storage.svc.cluster.local:9000"
+      prefix: "mongodb"
 
 # =============================================================================
 # MYSQL — Percona Operator for MySQL (PXC)
@@ -357,12 +394,18 @@ mysql:
     storageClass: longhorn
 
   backup:
-    # Backups remain disabled until remote storage is configured.
-    enabled: false
+    # PXC backups write to the shared MinIO bucket using a MySQL prefix.
+    enabled: true
+    schedule:
+      name: daily-backup
+      cron: "20 2 * * *"
+      keep: 7
     s3:
-      bucket: your-bucket
+      bucket: postgresql-backups
       region: us-east-1
-      credentialSecret: "aws-s3-secret"
+      credentialSecret: "minio-backup-credentials"
+      endpointURL: "http://my-minio-minio.storage.svc.cluster.local:9000"
+      prefix: "mysql"
 
 # =============================================================================
 # REDIS — OpsTree Redis Operator
@@ -499,10 +542,21 @@ cassandra:
     storageClass: longhorn
 
   backup:
-    # Medusa backups are disabled until object storage is ready.
-    enabled: false
+    # Medusa stores Cassandra backups in the shared MinIO bucket.
+    enabled: true
     medusaImage: k8ssandra/medusa:0.14.0
+    schedule:
+      enabled: true
+      cron: "30 3 * * *"
+      disabled: false
+      backupType: differential
     s3:
-      bucket: your-bucket
+      provider: s3_compatible
+      bucket: postgresql-backups
       region: us-east-1
-      credentialSecret: "aws-s3-secret"
+      credentialSecret: "minio-backup-credentials"
+      prefix: "cassandra"
+      host: my-minio-minio.storage.svc.cluster.local
+      port: 9000
+      secure: false
+ 

@@ -10,21 +10,26 @@
 #
 # STEPS (in order): preflight, repos, longhorn, deps, install_operators,
 #                   vault_transit, vault_install, vault_init, vault_configure,
-#                   operator_plugins, deploy
+#                   minio_deploy, operator_plugins, deploy
 #
 # Create .env file with passwords before running:
 #   PG_PASS=secret  MONGO_PASS=secret  MYSQL_PASS=secret
 #   REDIS_PASS=secret  CASS_PASS=secret
+#   MINIO_ROOT_USER=secret  MINIO_ROOT_PASSWORD=secret
 # =============================================================================
 
 RELEASE="my-db"
 NAMESPACE="databases"
+MINIO_NAMESPACE="storage"
 VAULT_NS="vault"
 TRANSIT_NS="vault-transit"
 CHART_DIR="./db-cluster"
+MINIO_CHART_DIR="./minio"
 VAULT_CHART_DIR="./vault"
 TRANSIT_CHART_DIR="./vault-transit"
 VAULT_CONFIG_RELEASE="${VAULT_CONFIG_RELEASE:-vault-config}"
+MINIO_RELEASE="${MINIO_RELEASE:-my-minio}"
+MINIO_VALUES_FILE="${MINIO_VALUES_FILE:-$MINIO_CHART_DIR/values.vault.yaml}"
 LONGHORN_REPLICA_COUNT="${LONGHORN_REPLICA_COUNT:-1}"
 CERT_MANAGER_NAMESPACE="${CERT_MANAGER_NAMESPACE:-cert-manager}"
 CERT_MANAGER_VERSION="${CERT_MANAGER_VERSION:-v1.15.3}"
@@ -77,13 +82,15 @@ require_real_passwords() {
         MYSQL_PASS
         REDIS_PASS
         CASS_PASS
+        MINIO_ROOT_USER
+        MINIO_ROOT_PASSWORD
     )
 
     local key value
     for key in "${PLACEHOLDER_KEYS[@]}"; do
         value="${!key:-}"
         case "$value" in
-            ""|"YourPostgresPassword"|"YourMongoPassword"|"YourMysqlPassword"|"YourRedisPassword"|"YourCassandraPassword")
+            ""|"YourPostgresPassword"|"YourMongoPassword"|"YourMysqlPassword"|"YourRedisPassword"|"YourCassandraPassword"|"YourMinioRootUser"|"YourMinioRootPassword")
                 die "Set a real value for $key in .env before running setup/deploy."
                 ;;
         esac
@@ -1499,12 +1506,32 @@ vault_configure() {
     log "[7/8] Installing Vault bootstrap/config chart..."
 
     [ -d "$VAULT_CHART_DIR" ] || die "Vault chart not found: $VAULT_CHART_DIR"
+    require_real_passwords
+    : "${MINIO_ROOT_USER:?Add MINIO_ROOT_USER to .env}"
+    : "${MINIO_ROOT_PASSWORD:?Add MINIO_ROOT_PASSWORD to .env}"
     kubectl get secret "${VAULT_CONFIG_RELEASE}-vault-root-token" -n "$VAULT_NS" >/dev/null 2>&1 \
         || die "${VAULT_CONFIG_RELEASE}-vault-root-token not found — run: ./setup.sh vault_init"
 
     helm upgrade --install "$VAULT_CONFIG_RELEASE" "$VAULT_CHART_DIR" \
         --namespace "$VAULT_NS" \
         --create-namespace \
+        --set "postgresql.superuserPassword=$PG_PASS" \
+        --set "postgresql.appPassword=$PG_PASS" \
+        --set "mongodb.clusterAdminPassword=$MONGO_PASS" \
+        --set "mongodb.userAdminPassword=$MONGO_PASS" \
+        --set "mongodb.clusterMonitorPassword=$MONGO_PASS" \
+        --set "mongodb.databaseAdminPassword=$MONGO_PASS" \
+        --set "mongodb.backupPassword=$MONGO_PASS" \
+        --set "mongodb.replicationKey=$MONGO_PASS" \
+        --set "mysql.rootPassword=$MYSQL_PASS" \
+        --set "mysql.appPassword=$MYSQL_PASS" \
+        --set "mysql.replicationPassword=$MYSQL_PASS" \
+        --set "mysql.monitorPassword=$MYSQL_PASS" \
+        --set "mysql.clusterCheckPassword=$MYSQL_PASS" \
+        --set "redis.password=$REDIS_PASS" \
+        --set "cassandra.password=$CASS_PASS" \
+        --set "minio.rootUser=$MINIO_ROOT_USER" \
+        --set "minio.rootPassword=$MINIO_ROOT_PASSWORD" \
         --wait --timeout 10m \
         || die "Vault bootstrap chart install failed"
 
@@ -1657,6 +1684,8 @@ deploy() {
     : "${MYSQL_PASS:?Add MYSQL_PASS to .env}"
     : "${REDIS_PASS:?Add REDIS_PASS to .env}"
     : "${CASS_PASS:?Add CASS_PASS to .env}"
+    : "${MINIO_ROOT_USER:?Add MINIO_ROOT_USER to .env}"
+    : "${MINIO_ROOT_PASSWORD:?Add MINIO_ROOT_PASSWORD to .env}"
     ensure_cloudflare_secret_if_present
     cleanup_stale_mongodb_bootstrap_if_needed
 
@@ -1766,6 +1795,47 @@ operator_plugins() {
     ok "Operator installer script completed"
 }
 
+minio_deploy() {
+    log "[8.5/9] Deploying MinIO with Vault-backed credentials..."
+
+    [ -d "$MINIO_CHART_DIR" ] || die "MinIO chart not found: $MINIO_CHART_DIR"
+    [ -f "$MINIO_VALUES_FILE" ] || die "MinIO values file not found: $MINIO_VALUES_FILE"
+
+    kubectl get clustersecretstore vault-backend >/dev/null 2>&1 \
+        || die "Vault ClusterSecretStore vault-backend is missing. Run ./setup.sh vault_configure first."
+    kubectl wait --for=condition=Ready clustersecretstore/vault-backend --timeout=180s >/dev/null 2>&1 \
+        || die "Vault ClusterSecretStore vault-backend is not Ready"
+
+    kubectl create namespace "$MINIO_NAMESPACE" 2>/dev/null || true
+    kubectl apply -f "$MINIO_CHART_DIR/externalsecret-storage.yaml" \
+        || die "Failed to apply MinIO storage ExternalSecret"
+    kubectl apply -f "$MINIO_CHART_DIR/externalsecret-databases.yaml" \
+        || die "Failed to apply MinIO databases ExternalSecret"
+
+    kubectl wait --for=condition=Ready externalsecret/minio-credentials -n "$MINIO_NAMESPACE" --timeout=180s >/dev/null 2>&1 \
+        || die "MinIO storage ExternalSecret did not become Ready"
+    retry 18 10 kubectl get secret minio-credentials -n "$MINIO_NAMESPACE" >/dev/null \
+        || die "MinIO credentials secret was not created in $MINIO_NAMESPACE"
+
+    kubectl create namespace "$NAMESPACE" 2>/dev/null || true
+    kubectl wait --for=condition=Ready externalsecret/minio-credentials -n "$NAMESPACE" --timeout=180s >/dev/null 2>&1 \
+        || die "MinIO databases ExternalSecret did not become Ready"
+    retry 18 10 kubectl get secret minio-credentials -n "$NAMESPACE" >/dev/null \
+        || die "MinIO credentials secret was not created in $NAMESPACE"
+
+    helm upgrade --install "$MINIO_RELEASE" "$MINIO_CHART_DIR" \
+        --namespace "$MINIO_NAMESPACE" \
+        --create-namespace \
+        -f "$MINIO_VALUES_FILE" \
+        --wait --timeout 10m \
+        || die "MinIO chart deploy failed"
+
+    wait_for_pods_ready "$MINIO_NAMESPACE" "app.kubernetes.io/name=minio,app.kubernetes.io/instance=$MINIO_RELEASE" 30 10 "MinIO pods" \
+        || die "MinIO pods did not become Ready"
+
+    ok "MinIO deployed"
+}
+
 # =============================================================================
 # FULL SETUP
 # =============================================================================
@@ -1786,6 +1856,7 @@ setup() {
     vault_install   || die "Step vault_install failed"
     vault_init      || die "Step vault_init failed"
     vault_configure || die "Step vault_configure failed"
+    minio_deploy    || die "Step minio_deploy failed"
     operator_plugins || die "Step operator_plugins failed"
     deploy          || die "Step deploy failed"
 
@@ -1814,6 +1885,9 @@ status() {
     echo ""
     echo "━━━ Main Vault ($VAULT_NS) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     kubectl get pods -n "$VAULT_NS" 2>/dev/null || echo "  not deployed"
+    echo ""
+    echo "━━━ MinIO ($MINIO_NAMESPACE) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    kubectl get pods -n "$MINIO_NAMESPACE" 2>/dev/null || echo "  not deployed"
     echo ""
     echo "━━━ Databases ($NAMESPACE) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     kubectl get pods -n "$NAMESPACE" 2>/dev/null || echo "  not deployed"
@@ -2012,9 +2086,10 @@ teardown() {
 
     # ── 4. Uninstall all Helm releases ───────────────────────────────────
     log "[4/8] Uninstalling Helm releases..."
-    helm uninstall "$RELEASE"       -n "$NAMESPACE"     2>/dev/null || true
-    helm uninstall vault            -n "$VAULT_NS"      2>/dev/null || true
-    helm uninstall vault-transit    -n "$TRANSIT_NS"    2>/dev/null || true
+    helm uninstall "$RELEASE"       -n "$NAMESPACE"      2>/dev/null || true
+    helm uninstall "$MINIO_RELEASE" -n "$MINIO_NAMESPACE" 2>/dev/null || true
+    helm uninstall vault            -n "$VAULT_NS"       2>/dev/null || true
+    helm uninstall vault-transit    -n "$TRANSIT_NS"     2>/dev/null || true
     helm uninstall external-secrets -n external-secrets 2>/dev/null || true
     helm uninstall cnpg             -n cnpg-system      2>/dev/null || true
     helm uninstall psmdb-operator   -n "$NAMESPACE"     2>/dev/null || true
@@ -2046,7 +2121,7 @@ teardown() {
 
     # ── 7. Delete all namespaces ──────────────────────────────────────────
     log "[7/8] Deleting namespaces..."
-    for ns in "$NAMESPACE" "$VAULT_NS" "$TRANSIT_NS"               external-secrets cnpg-system longhorn-system traefik; do
+    for ns in "$NAMESPACE" "$MINIO_NAMESPACE" "$VAULT_NS" "$TRANSIT_NS" external-secrets cnpg-system longhorn-system traefik; do
         # Final PVC sweep
         for pvc in $(kubectl get pvc -n "$ns" -o name --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null); do
             kubectl patch "$pvc" -n "$ns"                 -p '{"metadata":{"finalizers":[]}}' --type=merge --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null || true
@@ -2076,7 +2151,7 @@ teardown() {
 
     echo ""
     echo "  Remaining namespaces:"
-    NS_LEFT=$(kubectl get namespace --no-headers 2>/dev/null |         grep -E "^vault|^databases|^longhorn|^external-secrets|^cnpg|^traefik" || true)
+    NS_LEFT=$(kubectl get namespace --no-headers 2>/dev/null |         grep -E "^vault|^databases|^storage|^longhorn|^external-secrets|^cnpg|^traefik" || true)
     [ -n "$NS_LEFT" ] && echo "$NS_LEFT" || echo "    none ✓"
 
     echo ""
@@ -2108,11 +2183,12 @@ teardownremain() {
     log "[2/5] Removing leftover operator Helm releases and namespaces..."
     helm uninstall external-secrets -n external-secrets 2>/dev/null || true
     helm uninstall cnpg -n cnpg-system 2>/dev/null || true
+    helm uninstall "$MINIO_RELEASE" -n "$MINIO_NAMESPACE" 2>/dev/null || true
     helm uninstall psmdb-operator -n "$NAMESPACE" 2>/dev/null || true
     helm uninstall pxc-operator -n "$NAMESPACE" 2>/dev/null || true
     helm uninstall redis-operator -n "$NAMESPACE" 2>/dev/null || true
     helm uninstall k8ssandra-operator -n "$NAMESPACE" 2>/dev/null || true
-    for ns in external-secrets cnpg-system; do
+    for ns in "$MINIO_NAMESPACE" external-secrets cnpg-system; do
         kubectl delete namespace "$ns" --force --grace-period=0 --wait=false --ignore-not-found --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null || true
     done
     ok "Operator cleanup attempted"
@@ -2209,67 +2285,72 @@ usage() {
     echo "    Why install them: operators are the controllers that create and"
     echo "    manage PostgreSQL, MongoDB, MySQL, Redis, and Cassandra clusters."
     echo ""
-    echo "12. deploy"
+    echo "12. minio_deploy"
+    echo "    Deploy MinIO and the Vault-backed ExternalSecrets it uses."
+    echo "    Why install it: PostgreSQL backups can target MinIO, and this"
+    echo "    step ensures the MinIO release consumes credentials from Vault."
+    echo ""
+    echo "13. deploy"
     echo "    Deploy the db-cluster chart and database resources."
     echo "    Why install it: this is the step that creates the actual database"
     echo "    custom resources, secrets wiring, ingress, and supporting objects."
     echo ""
-    echo "13. operator_plugins"
+    echo "14. operator_plugins"
     echo "    Rerun the standalone operator installer script."
     echo "    Why install it: useful when operators need repair or reinstall"
     echo "    without rerunning the entire stack."
     echo ""
-    echo "14. status"
+    echo "15. status"
     echo "    Show pods and PVCs across the main namespaces."
     echo "    Why use it: quick health check after install or during debugging."
     echo ""
-    echo "15. clusters"
+    echo "16. clusters"
     echo "    Show database custom resources."
     echo "    Why use it: operators report database state through CRs, not only pods."
     echo ""
-    echo "16. vault_status"
+    echo "17. vault_status"
     echo "    Check seal and health status of Vault."
     echo "    Why use it: if Vault is sealed or unhealthy, secret sync and auth"
     echo "    problems will appear across the platform."
     echo ""
-    echo "17. upgrade"
+    echo "18. upgrade"
     echo "    Reapply the Helm release after values or password changes."
     echo "    Why use it: update the running release without tearing it down."
     echo ""
-    echo "18. sync"
+    echo "19. sync"
     echo "    Force External Secrets sync from Vault."
     echo "    Why use it: push updated Vault values back into Kubernetes secrets."
     echo ""
-    echo "19. vault_list"
+    echo "20. vault_list"
     echo "    List database secret paths in Vault."
     echo "    Why use it: confirm secret paths were created as expected."
     echo ""
-    echo "20. vault_get <db>"
+    echo "21. vault_get <db>"
     echo "    Read one database secret from Vault."
     echo "    Why use it: debug credential mismatches for a specific database."
     echo ""
-    echo "21. rotate <db> <pass>"
+    echo "22. rotate <db> <pass>"
     echo "    Rotate one database password in Vault."
     echo "    Why use it: Vault is the source of truth, so rotation should start there."
     echo ""
-    echo "22. pg | mongo | redis | mysql | cassandra"
+    echo "23. pg | mongo | redis | mysql | cassandra"
     echo "    Port-forward one database locally."
     echo "    Why use it: local access for admin work without exposing databases publicly."
     echo ""
-    echo "23. vault_ui | longhorn_ui"
+    echo "24. vault_ui | longhorn_ui"
     echo "    Port-forward Vault UI or Longhorn UI locally."
     echo "    Why use it: inspect secret state or storage state safely from your machine."
     echo ""
-    echo "24. cloudflare_secret"
+    echo "25. cloudflare_secret"
     echo "    Create or update the Cloudflare API token secret."
     echo "    Why use it: the Cloudflare DNS automation job reads the token from"
     echo "    a Kubernetes secret instead of plain Helm values."
     echo ""
-    echo "25. teardown"
+    echo "26. teardown"
     echo "    Delete the entire platform. Destructive."
     echo "    Why use it: reset the cluster when you want a clean reinstall."
     echo ""
-    echo "26. teardownremain"
+    echo "27. teardownremain"
     echo "    Delete remaining cluster-scoped leftovers, generated local setup files,"
     echo "    and Cloudflare DNS records for the current values profile. Destructive."
     echo "    Why use it: use after teardown when you want a deeper reset before a"
@@ -2287,7 +2368,7 @@ CMD="${1:-setup}"; shift 2>/dev/null || true
 case "$CMD" in
     setup|small_setup|teardown|teardownremain|status|clusters|vault_status|upgrade|sync|usage|\
     preflight|repos|ingress_nginx|longhorn|deps|vault_transit|vault_install|vault_init|\
-    install_operators|deploy|operator_plugins|vault_list|vault_get|rotate|cloudflare_secret|\
+    install_operators|minio_deploy|deploy|operator_plugins|vault_list|vault_get|rotate|cloudflare_secret|\
     pg|mongo|redis|mysql|cassandra|vault_ui|longhorn_ui)
         "$CMD" "$@" ;;
     *) echo "Unknown: $CMD"; usage; exit 1 ;;

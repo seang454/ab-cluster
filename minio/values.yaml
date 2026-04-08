@@ -1,0 +1,63 @@
+# =============================================================================
+# MinIO standalone chart values
+# Single-node S3-compatible object storage for backups and internal services.
+# =============================================================================
+
+replicaCount: 1
+
+image:
+  repository: quay.io/minio/minio
+  tag: RELEASE.2025-09-07T16-13-09Z
+  pullPolicy: IfNotPresent
+
+auth:
+  # Standalone default: leave empty to let this chart create its own Secret.
+  # For Vault-backed installs, values.vault.yaml overrides this to
+  # `minio-credentials`, which is created by External Secrets Operator.
+  existingSecret: "minio-credentials"
+  rootUser: minioadmin
+  rootPassword: "change-this-minio-password"
+  rootUserKey: root-user
+  rootPasswordKey: root-password
+
+service:
+  type: ClusterIP
+  apiPort: 9000
+  consolePort: 9001
+  annotations: {}
+
+ingress:
+  enabled: true
+  className: nginx
+  host: minio.seang.shop
+  path: /
+  pathType: Prefix
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  tls:
+    enabled: true
+    secretName: minio-tls
+
+persistence:
+  enabled: true
+  storageClass: longhorn
+  accessModes:
+    - ReadWriteOnce
+  size: 20Gi
+
+resources: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+bucketProvisioning:
+  enabled: true
+  image:
+    repository: quay.io/minio/mc
+    tag: RELEASE.2025-08-13T08-35-41Z
+    pullPolicy: IfNotPresent
+  bucket: postgresql-backups
+  region: us-east-1
+  versioning: true
+  policy: private

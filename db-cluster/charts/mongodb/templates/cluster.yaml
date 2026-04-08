@@ -86,20 +86,27 @@ spec:
             storage: {{ .Values.storage.size }}
 
   {{- if .Values.backup.enabled }}
+  {{- $storageType := .Values.backup.storageType | default "minio" }}
   backup:
     enabled: true
     image: percona/percona-backup-mongodb:2.3.0
     storages:
       s3-storage:
-        type: s3
-        s3:
+        type: {{ $storageType }}
+        {{ $storageType }}:
           bucket: {{ .Values.backup.s3.bucket }}
           region: {{ .Values.backup.s3.region }}
           credentialsSecret: {{ .Values.backup.s3.credentialSecret }}
+          {{- with .Values.backup.s3.endpointURL }}
+          endpointUrl: {{ . | quote }}
+          {{- end }}
+          {{- with .Values.backup.s3.prefix }}
+          prefix: {{ . | quote }}
+          {{- end }}
     tasks:
-    - name: daily-backup
+    - name: {{ .Values.backup.task.name | default "daily-backup" | quote }}
       enabled: true
-      schedule: "0 2 * * *"
+      schedule: {{ .Values.backup.task.schedule | default "0 2 * * *" | quote }}
       storageName: s3-storage
-      compressionType: gzip
+      compressionType: {{ .Values.backup.task.compressionType | default "gzip" | quote }}
   {{- end }}

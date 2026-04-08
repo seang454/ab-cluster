@@ -98,9 +98,15 @@ spec:
           bucket: {{ .Values.backup.s3.bucket }}
           region: {{ .Values.backup.s3.region }}
           credentialsSecret: {{ .Values.backup.s3.credentialSecret }}
+          {{- with .Values.backup.s3.endpointURL }}
+          endpointUrl: {{ . | quote }}
+          {{- end }}
+          {{- with .Values.backup.s3.prefix }}
+          prefix: {{ . | quote }}
+          {{- end }}
     schedule:
-    - name: daily-backup
-      schedule: "0 2 * * *"
-      keep: 7
+    - name: {{ .Values.backup.schedule.name | default "daily-backup" | quote }}
+      schedule: {{ .Values.backup.schedule.cron | default "0 2 * * *" | quote }}
+      keep: {{ .Values.backup.schedule.keep | default 7 }}
       storageName: s3-storage
   {{- end }}

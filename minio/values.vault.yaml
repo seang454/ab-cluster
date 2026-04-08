@@ -1,0 +1,8 @@
+auth:
+  existingSecret: minio-credentials
+  rootUserKey: root-user
+  rootPasswordKey: root-password
+
+bucketProvisioning:
+  enabled: true
+  bucket: postgresql-backups

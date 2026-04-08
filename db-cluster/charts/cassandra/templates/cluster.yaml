@@ -86,8 +86,15 @@ spec:
       name: medusa
       tag: {{ .Values.backup.medusaImage | splitList ":" | last }}
     storageProperties:
-      storageProvider: s3
+      storageProvider: {{ .Values.backup.s3.provider | default "s3_compatible" }}
       bucketName: {{ .Values.backup.s3.bucket }}
       region: {{ .Values.backup.s3.region }}
-      credentialsSecret: {{ .Values.backup.s3.credentialSecret }}
+      storageSecretRef:
+        name: {{ .Values.backup.s3.credentialSecret }}
+      prefix: {{ .Values.backup.s3.prefix | quote }}
+      {{- if eq (.Values.backup.s3.provider | default "s3_compatible") "s3_compatible" }}
+      host: {{ .Values.backup.s3.host | quote }}
+      port: {{ .Values.backup.s3.port }}
+      secure: {{ .Values.backup.s3.secure }}
+      {{- end }}
   {{- end }}

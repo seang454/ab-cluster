@@ -46,6 +46,10 @@ postgresql:
   credentials:
     superuser: "YourSecurePassword!"
     admin: "YourSecurePassword!"
+  backup:
+    schedule:
+      enabled: true
+      cron: "0 0 2 * * *"
 
 mongodb:
   enabled: true
@@ -84,3 +88,41 @@ cassandra:
 - If you are using Spring or another caller to deploy the OCI chart, point it
   at the new chart version and keep the override file to non-empty request
   fields only.
+
+## PostgreSQL Backups To MinIO
+
+The PostgreSQL chart supports CloudNativePG backups to S3-compatible object
+storage such as MinIO. Point the backup section at the MinIO service and
+reference the MinIO credentials secret.
+
+Example:
+
+```yaml
+postgresql:
+  enabled: true
+  backup:
+    enabled: true
+    provider: s3
+    destinationPath: "s3://postgresql-backups/postgresql"
+    endpointURL: "http://my-minio-minio.storage.svc.cluster.local:9000"
+    s3Credentials:
+      accessKeyId:
+        secretName: my-minio-minio-auth
+        key: root-user
+      secretAccessKey:
+        secretName: my-minio-minio-auth
+        key: root-password
+    retentionPolicy: "7d"
+    schedule:
+      enabled: true
+      cron: "0 0 2 * * *"
+```
+
+If MinIO is exposed over HTTPS with a private CA, also set
+`postgresql.backup.endpointCA.secretName`.
+
+CloudNativePG scheduled backups use a six-field cron format with seconds:
+
+- Daily at 02:00 UTC: `0 0 2 * * *`
+- Every 6 hours: `0 0 */6 * * *`
+- Weekly at 03:00 UTC on Sunday: `0 0 3 * * 0`

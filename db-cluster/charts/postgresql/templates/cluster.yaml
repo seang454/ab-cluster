@@ -91,10 +91,33 @@ spec:
   backup:
     barmanObjectStore:
       destinationPath: {{ .Values.backup.destinationPath | quote }}
+      {{- with .Values.backup.endpointURL }}
+      endpointURL: {{ . | quote }}
+      {{- end }}
+      {{- with .Values.backup.endpointCA.secretName }}
+      endpointCA:
+        name: {{ . }}
+        key: {{ $.Values.backup.endpointCA.secretKey | quote }}
+      {{- end }}
+      {{- if eq (.Values.backup.provider | default "s3") "gcs" }}
       googleCredentials:
         applicationCredentials:
           name: {{ .Values.backup.credentialSecret }}
           key: credentials.json
+      {{- else }}
+      s3Credentials:
+        accessKeyId:
+          name: {{ .Values.backup.s3Credentials.accessKeyId.secretName }}
+          key: {{ .Values.backup.s3Credentials.accessKeyId.key | quote }}
+        secretAccessKey:
+          name: {{ .Values.backup.s3Credentials.secretAccessKey.secretName }}
+          key: {{ .Values.backup.s3Credentials.secretAccessKey.key | quote }}
+        {{- with .Values.backup.s3Credentials.region.secretName }}
+        region:
+          name: {{ . }}
+          key: {{ $.Values.backup.s3Credentials.region.key | quote }}
+        {{- end }}
+      {{- end }}
       wal:
         compression: gzip
     retentionPolicy: {{ .Values.backup.retentionPolicy | quote }}

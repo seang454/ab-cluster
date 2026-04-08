@@ -1,0 +1,44 @@
+{{- if .Values.bucketProvisioning.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "minio.fullname" . }}-bucket
+  labels:
+    {{- include "minio.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  template:
+    metadata:
+      labels:
+        {{- include "minio.selectorLabels" . | nindent 8 }}
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: mc
+          image: "{{ .Values.bucketProvisioning.image.repository }}:{{ .Values.bucketProvisioning.image.tag }}"
+          imagePullPolicy: {{ .Values.bucketProvisioning.image.pullPolicy }}
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "minio.secretName" . }}
+                  key: {{ .Values.auth.rootUserKey }}
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "minio.secretName" . }}
+                  key: {{ .Values.auth.rootPasswordKey }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              mc alias set local http://{{ include "minio.fullname" . }}:{{ .Values.service.apiPort }} "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
+              mc mb --ignore-existing local/{{ .Values.bucketProvisioning.bucket }}
+              {{- if .Values.bucketProvisioning.versioning }}
+              mc version enable local/{{ .Values.bucketProvisioning.bucket }}
+              {{- end }}
+              mc anonymous set {{ .Values.bucketProvisioning.policy }} local/{{ .Values.bucketProvisioning.bucket }}
+{{- end }}

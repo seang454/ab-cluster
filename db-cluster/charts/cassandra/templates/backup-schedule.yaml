@@ -1,0 +1,13 @@
+{{- if and .Values.backup.enabled .Values.backup.schedule.enabled }}
+apiVersion: medusa.k8ssandra.io/v1alpha1
+kind: MedusaBackupSchedule
+metadata:
+  name: {{ include "cassandra.fullname" . }}-backup-schedule
+  namespace: {{ .Release.Namespace }}
+spec:
+  backupSpec:
+    backupType: {{ .Values.backup.schedule.backupType | quote }}
+    cassandraDatacenter: {{ .Values.cluster.config.datacenter | quote }}
+  cronSchedule: {{ .Values.backup.schedule.cron | quote }}
+  disabled: {{ .Values.backup.schedule.disabled }}
+{{- end }}

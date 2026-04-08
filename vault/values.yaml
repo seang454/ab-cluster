@@ -88,3 +88,7 @@ redis:
 cassandra:
   username: "cassandra"
   password: ""
+
+minio:
+  rootUser: ""
+  rootPassword: ""
