@@ -13,7 +13,6 @@ Kubernetes resources. Cluster-wide bootstrap services are installed separately.
 - Cassandra `K8ssandraCluster`
 - Native `Secret` objects for database credentials
 - Database Services, Ingresses, and CRs
-- Optional Cloudflare DNS job for exposed hostnames
 - Optional HAProxy-based TCP proxy
 
 ## What this chart does not include

@@ -178,130 +178,6 @@ vault_transit_regenerate_root_token() {
         vault operator generate-root -decode="$encoded_token" -otp="$otp" 2>/dev/null
 }
 
-cloudflare_job_config() {
-    local HELM_VALUES_ARGS=()
-    mapfile -t HELM_VALUES_ARGS < <(values_args)
-
-    helm template "$RELEASE" "$CHART_DIR" "${HELM_VALUES_ARGS[@]}" 2>/dev/null | \
-        RELEASE="$RELEASE" python3 - <<'PY'
-import json
-import os
-import re
-import sys
-
-text = sys.stdin.read()
-release = os.environ["RELEASE"]
-job_name = re.escape(f"{release}-cloudflare-dns")
-
-job_match = re.search(
-    rf"kind:\s*Job\s+metadata:\s+name:\s*{job_name}\b(.*?)(?:\n---\n|\Z)",
-    text,
-    re.S,
-)
-if not job_match:
-    raise SystemExit(0)
-
-job = job_match.group(1)
-
-def capture(pattern):
-    match = re.search(pattern, job, re.S)
-    return match.group(1).strip() if match else ""
-
-def strip_quotes(value):
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-        return value[1:-1]
-    return value
-
-token_secret = capture(r"- name:\s*CLOUDFLARE_API_TOKEN.*?secretKeyRef:\s*name:\s*([^\s]+)")
-zone_name = strip_quotes(capture(r"- name:\s*CLOUDFLARE_ZONE_NAME\s+value:\s*([^\n]+)"))
-records_json = strip_quotes(capture(r"- name:\s*DNS_RECORDS_JSON\s+value:\s*([^\n]+)"))
-
-try:
-    records = json.loads(records_json) if records_json else []
-except json.JSONDecodeError:
-    records = []
-
-print(json.dumps({
-    "token_secret": token_secret,
-    "zone_name": zone_name,
-    "records": records,
-}))
-PY
-}
-
-delete_cloudflare_dns_records() {
-    local cfg token_secret zone_name token
-    cfg="$(cloudflare_job_config)"
-    [ -z "$cfg" ] && { info "No Cloudflare DNS job rendered for current values; skipping DNS cleanup"; return 0; }
-
-    token_secret="$(printf '%s' "$cfg" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("token_secret",""))')"
-    zone_name="$(printf '%s' "$cfg" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("zone_name",""))')"
-
-    token="${CLOUDFLARE_API_TOKEN:-}"
-    if [ -z "$token" ] && [ -n "$token_secret" ]; then
-        token="$(kubectl get secret "$token_secret" -n "$NAMESPACE" -o jsonpath='{.data.token}' 2>/dev/null | base64 -d || true)"
-    fi
-
-    if [ -z "$token" ]; then
-        info "Cloudflare API token not available; skipping DNS record deletion"
-        return 0
-    fi
-
-    CLOUDFLARE_CFG_JSON="$cfg" CLOUDFLARE_API_TOKEN="$token" python3 - <<'PY'
-import json
-import os
-import ssl
-import sys
-import urllib.error
-import urllib.parse
-import urllib.request
-
-cfg = json.loads(os.environ["CLOUDFLARE_CFG_JSON"])
-token = os.environ["CLOUDFLARE_API_TOKEN"].strip()
-zone_name = cfg.get("zone_name", "").strip()
-records = [r.strip() for r in cfg.get("records", []) if str(r).strip()]
-
-if not zone_name or not records:
-    raise SystemExit(0)
-
-base = "https://api.cloudflare.com/client/v4"
-headers = {
-    "Authorization": f"Bearer {token}",
-    "Content-Type": "application/json",
-}
-
-def request(method, path):
-    req = urllib.request.Request(base + path, headers=headers, method=method)
-    try:
-        with urllib.request.urlopen(req, context=ssl.create_default_context()) as resp:
-            body = resp.read().decode("utf-8")
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
-        raise SystemExit(f"Cloudflare API error {exc.code}: {body}")
-    data = json.loads(body)
-    if not data.get("success"):
-        raise SystemExit(f"Cloudflare API request failed: {body}")
-    return data["result"]
-
-zones = request("GET", f"/zones?name={urllib.parse.quote(zone_name, safe='')}")
-if not zones:
-    raise SystemExit(f"Cloudflare zone not found: {zone_name}")
-zone_id = zones[0]["id"]
-
-for record_name in records:
-    existing = request(
-        "GET",
-        f"/zones/{zone_id}/dns_records?type=A&name={urllib.parse.quote(record_name, safe='')}",
-    )
-    if not existing:
-        print(f"DNS record not found, skipping: {record_name}")
-        continue
-    for rec in existing:
-        request("DELETE", f"/zones/{zone_id}/dns_records/{rec['id']}")
-        print(f"Deleted DNS record {rec['name']}")
-PY
-}
-
 schedulable_worker_report() {
     kubectl get nodes -o json > /tmp/setup_nodes.json 2>/dev/null || return 1
     kubectl get pods -A -o json > /tmp/setup_pods.json 2>/dev/null || return 1
@@ -1686,7 +1562,6 @@ deploy() {
     : "${CASS_PASS:?Add CASS_PASS to .env}"
     : "${MINIO_ROOT_USER:?Add MINIO_ROOT_USER to .env}"
     : "${MINIO_ROOT_PASSWORD:?Add MINIO_ROOT_PASSWORD to .env}"
-    ensure_cloudflare_secret_if_present
     cleanup_stale_mongodb_bootstrap_if_needed
 
     # Clean up any ad-hoc RBAC from previous recovery attempts so Helm can own it.
@@ -1929,22 +1804,6 @@ mysql()      { kubectl port-forward svc/"$RELEASE"-mysql-haproxy 3306:3306 -n "$
 cassandra()  { kubectl port-forward svc/"$RELEASE"-dc1-service 9042:9042 -n "$NAMESPACE"; }
 vault_ui()   { kubectl port-forward svc/vault 8200:8200 -n "$VAULT_NS"; }
 longhorn_ui(){ kubectl port-forward svc/longhorn-frontend 8080:80 -n longhorn-system; }
-cloudflare_secret() {
-    : "${CLOUDFLARE_API_TOKEN:?Add CLOUDFLARE_API_TOKEN to your environment or .env}"
-    kubectl create namespace "$NAMESPACE" 2>/dev/null || true
-    kubectl create secret generic cloudflare-api-token \
-        --from-literal=token="$CLOUDFLARE_API_TOKEN" \
-        --namespace "$NAMESPACE" \
-        --dry-run=client -o yaml | kubectl apply -f -
-    ok "cloudflare-api-token secret created in $NAMESPACE"
-}
-
-ensure_cloudflare_secret_if_present() {
-    if [ -n "${CLOUDFLARE_API_TOKEN:-}" ]; then
-        cloudflare_secret
-    fi
-}
-
 # =============================================================================
 # VAULT OPS
 # =============================================================================
@@ -1994,7 +1853,6 @@ sync() {
 upgrade() {
     : "${PG_PASS:?}" ; : "${MONGO_PASS:?}" ; : "${MYSQL_PASS:?}"
     : "${REDIS_PASS:?}" ; : "${CASS_PASS:?}"
-    ensure_cloudflare_secret_if_present
     local HELM_VALUES_ARGS=()
     if [ -n "$VALUES_FILE" ]; then
         mapfile -t HELM_VALUES_ARGS < <(values_args)
@@ -2170,17 +2028,12 @@ teardown() {
 
 teardownremain() {
     echo ""
-    echo "==> WARNING: This will delete remaining cluster-scoped resources,"
-    echo "    generated local setup files, and Cloudflare DNS records managed"
-    echo "    by the current values profile in 5 seconds"
+    echo "==> WARNING: This will delete remaining cluster-scoped resources"
+    echo "    and generated local setup files in 5 seconds"
     echo "    Ctrl+C to cancel..."
     sleep 5
 
-    log "[1/5] Deleting Cloudflare DNS records for the current values profile..."
-    delete_cloudflare_dns_records || true
-    ok "Cloudflare DNS cleanup attempted"
-
-    log "[2/5] Removing leftover operator Helm releases and namespaces..."
+    log "[1/4] Removing leftover operator Helm releases and namespaces..."
     helm uninstall external-secrets -n external-secrets 2>/dev/null || true
     helm uninstall cnpg -n cnpg-system 2>/dev/null || true
     helm uninstall "$MINIO_RELEASE" -n "$MINIO_NAMESPACE" 2>/dev/null || true
@@ -2193,7 +2046,7 @@ teardownremain() {
     done
     ok "Operator cleanup attempted"
 
-    log "[3/5] Deleting leftover cluster-scoped CRDs, RBAC, stores, and webhooks..."
+    log "[2/4] Deleting leftover cluster-scoped CRDs, RBAC, stores, and webhooks..."
     kubectl delete clustersecretstore vault-backend --ignore-not-found --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null || true
     for obj in $(kubectl get clusterrole,clusterrolebinding,validatingwebhookconfiguration,mutatingwebhookconfiguration --no-headers --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null | awk '{print $1}' | grep -E 'external-secrets|cnpg|percona|psmdb|pxc|redis-operator|k8ssandra|longhorn|traefik|vault' || true); do
         kubectl delete "$obj" --ignore-not-found --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null || true
@@ -2204,11 +2057,11 @@ teardownremain() {
     done
     ok "Cluster-scoped cleanup attempted"
 
-    log "[4/5] Removing generated local setup files..."
+    log "[3/4] Removing generated local setup files..."
     rm -f .env vault-init.json vault-main-init.json vault-transit-init.json /tmp/live-psmdb.yaml /tmp/my-db-values.yaml
     ok "Generated local files removed"
 
-    log "[5/5] Verification..."
+    log "[4/4] Verification..."
     echo ""
     echo "  Remaining operator CRDs:"
     CRDS=$(kubectl get crd 2>/dev/null | grep -E "longhorn|cnpg|percona|psmdb|external-secrets|redis\\.opstreelabs|k8ssandra|cassandradatacenters|cassandratasks|clientconfigs" || true)
@@ -2341,18 +2194,12 @@ usage() {
     echo "    Port-forward Vault UI or Longhorn UI locally."
     echo "    Why use it: inspect secret state or storage state safely from your machine."
     echo ""
-    echo "25. cloudflare_secret"
-    echo "    Create or update the Cloudflare API token secret."
-    echo "    Why use it: the Cloudflare DNS automation job reads the token from"
-    echo "    a Kubernetes secret instead of plain Helm values."
-    echo ""
-    echo "26. teardown"
+    echo "25. teardown"
     echo "    Delete the entire platform. Destructive."
     echo "    Why use it: reset the cluster when you want a clean reinstall."
     echo ""
-    echo "27. teardownremain"
-    echo "    Delete remaining cluster-scoped leftovers, generated local setup files,"
-    echo "    and Cloudflare DNS records for the current values profile. Destructive."
+    echo "26. teardownremain"
+    echo "    Delete remaining cluster-scoped leftovers and generated local setup files. Destructive."
     echo "    Why use it: use after teardown when you want a deeper reset before a"
     echo "    fresh reinstall."
     echo ""
@@ -2368,7 +2215,7 @@ CMD="${1:-setup}"; shift 2>/dev/null || true
 case "$CMD" in
     setup|small_setup|teardown|teardownremain|status|clusters|vault_status|upgrade|sync|usage|\
     preflight|repos|ingress_nginx|longhorn|deps|vault_transit|vault_install|vault_init|\
-    install_operators|minio_deploy|deploy|operator_plugins|vault_list|vault_get|rotate|cloudflare_secret|\
+    install_operators|minio_deploy|deploy|operator_plugins|vault_list|vault_get|rotate|\
     pg|mongo|redis|mysql|cassandra|vault_ui|longhorn_ui)
         "$CMD" "$@" ;;
     *) echo "Unknown: $CMD"; usage; exit 1 ;;

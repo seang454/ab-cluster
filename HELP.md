@@ -185,13 +185,6 @@ Use this to port-forward Vault UI to local port `8200`.
 28. `./setup.sh longhorn_ui`
 Use this to port-forward Longhorn UI to local port `8080`.
 
-29. `./setup.sh cloudflare_secret`
-Use this to create or update the Cloudflare API token secret.
-
-Why:
-- The Cloudflare DNS automation job reads the token from a Kubernetes secret.
-- This avoids storing the token directly in `values.yaml`.
-
 Why for all port-forward commands:
 - They give local access without exposing services publicly.
 - They are useful for debugging, admin work, and local client testing.
@@ -221,46 +214,6 @@ Default Traefik TCP ports:
 Important Cassandra note:
 - Cassandra TLS is store-based, not PEM-based
 - You must provide keystore/truststore secrets or enable inline secret creation with valid base64-encoded store content
-
-## Cloudflare DNS
-
-For Cloudflare-backed public hostnames:
-
-- Use `DNS only` records unless you intentionally want Cloudflare HTTP proxying for a web UI.
-- Point the hostname to the existing external IP that already reaches your ingress controller.
-- Put database hostnames in the relevant `*.externalAccess.publicHostnames` value only if you are intentionally exposing that database outside the cluster.
-
-Example:
-- `vault.example.com` -> external IP of your ingress path
-- `longhorn.example.com` -> external IP of your ingress path
-- client connects to `postgres-db.example.com:5432`
-- PostgreSQL external exposure is not handled by standard HTTP Ingress
-- PostgreSQL terminates TLS using a cert that includes `postgres-db.example.com` when you expose it on its native port
-
-## Cloudflare Automation
-
-The chart can create/update Cloudflare DNS records automatically.
-
-- Set `cloudflare.enabled: true`
-- Set `cloudflare.zoneName`
-- Set `cloudflare.externalIP`
-- Put DB hostnames in the relevant `*.externalAccess.publicHostnames`
-- Store the Cloudflare API token in a Kubernetes secret and set `cloudflare.apiTokenExistingSecret`
-
-Example secret:
-```bash
-kubectl create secret generic cloudflare-api-token \
-  --from-literal=token=YOUR_CLOUDFLARE_API_TOKEN \
-  -n databases
-```
-
-Or with the repo helper:
-```bash
-export CLOUDFLARE_API_TOKEN=YOUR_CLOUDFLARE_API_TOKEN
-./setup.sh cloudflare_secret
-```
-
-Then on install/upgrade the chart runs a job that upserts DNS-only `A` records for those hostnames.
 
 ## Destructive Command
 

@@ -64,26 +64,6 @@ externalTcpProxy:
     server: 1m
 
 # =============================================================================
-# CLOUDFLARE DNS AUTOMATION
-# Creates/updates DNS-only A records for database hostnames that point at the
-# external IP already routing traffic to your ingress controller.
-# =============================================================================
-cloudflare:
-  # Cloudflare DNS automation maps public database hostnames to the cluster IP.
-  enabled: true
-  # DNS zone that owns the database hostnames.
-  zoneName: seang.shop
-  # External IP already routed to your ingress or TCP proxy path.
-  externalIP: 35.194.146.154
-  # Use DNS-only records for raw database ports.
-  proxied: false
-  ttl: 1
-  apiToken: ""
-  # Existing secret that stores the API token for DNS updates.
-  apiTokenExistingSecret: cloudflare-api-token
-  apiTokenSecretKey: token
-
-# =============================================================================
 # POSTGRESQL — CloudNativePG Operator
 # =============================================================================
 postgresql:
