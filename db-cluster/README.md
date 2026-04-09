@@ -103,7 +103,7 @@ postgresql:
     enabled: true
     provider: s3
     destinationPath: "s3://postgresql-backups/postgresql"
-    endpointURL: "http://my-minio-minio.storage.svc.cluster.local:9000"
+    endpointURL: "http://my-minio-minio.storage.svc:9000"
     s3Credentials:
       accessKeyId:
         secretName: my-minio-minio-auth

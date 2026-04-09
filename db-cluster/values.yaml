@@ -154,12 +154,13 @@ postgresql:
 
   backup:
     # Default backup target is the MinIO release installed by setup.sh.
+    # Uses one bucket per Helm release, with a PostgreSQL-specific prefix.
     enabled: true
     # Supported providers in this chart: s3, gcs
     provider: s3
-    destinationPath: "s3://postgresql-backups/postgresql"
+    destinationPath: "s3://{{ .Release.Namespace }}/postgresql"
     # Use endpointURL for S3-compatible targets such as MinIO.
-    endpointURL: "http://my-minio-minio.storage.svc.cluster.local:9000"
+    endpointURL: "http://my-minio-minio.storage.svc:9000"
     # Optional CA bundle secret for private/self-signed HTTPS endpoints.
     endpointCA:
       secretName: ""
@@ -289,7 +290,7 @@ mongodb:
     storageClass: longhorn
 
   backup:
-    # Percona backup jobs write to the same MinIO bucket using a MongoDB prefix.
+    # Percona backup jobs use one bucket per Helm release, with a MongoDB prefix.
     enabled: true
     storageType: minio
     task:
@@ -297,10 +298,10 @@ mongodb:
       schedule: "10 2 * * *"
       compressionType: gzip
     s3:
-      bucket: postgresql-backups
+      bucket: "{{ .Release.Namespace }}"
       region: us-east-1
       credentialSecret: "minio-backup-credentials"
-      endpointURL: "http://my-minio-minio.storage.svc.cluster.local:9000"
+      endpointURL: "http://my-minio-minio.storage.svc:9000"
       prefix: "mongodb"
 
 # =============================================================================
@@ -374,17 +375,17 @@ mysql:
     storageClass: longhorn
 
   backup:
-    # PXC backups write to the shared MinIO bucket using a MySQL prefix.
+    # PXC backups use one bucket per Helm release, with a MySQL prefix.
     enabled: true
     schedule:
       name: daily-backup
       cron: "20 2 * * *"
       keep: 7
     s3:
-      bucket: postgresql-backups
+      bucket: "{{ .Release.Namespace }}"
       region: us-east-1
       credentialSecret: "minio-backup-credentials"
-      endpointURL: "http://my-minio-minio.storage.svc.cluster.local:9000"
+      endpointURL: "http://my-minio-minio.storage.svc:9000"
       prefix: "mysql"
 
 # =============================================================================
@@ -449,6 +450,8 @@ redis:
     # Exporter is off by default to keep the footprint down.
     enabled: false
     image: quay.io/opstree/redis-exporter:v1.44.0
+  # This Redis chart does not currently define a backup integration.
+  # Keep Redis persistence enabled, or add a separate snapshot/backup workflow.
 
 # =============================================================================
 # CASSANDRA — K8ssandra Operator
@@ -522,7 +525,7 @@ cassandra:
     storageClass: longhorn
 
   backup:
-    # Medusa stores Cassandra backups in the shared MinIO bucket.
+    # Medusa uses one bucket per Helm release, with a Cassandra prefix.
     enabled: true
     medusaImage: k8ssandra/medusa:0.14.0
     schedule:
@@ -532,11 +535,11 @@ cassandra:
       backupType: differential
     s3:
       provider: s3_compatible
-      bucket: postgresql-backups
+      bucket: "{{ .Release.Namespace }}"
       region: us-east-1
       credentialSecret: "minio-backup-credentials"
       prefix: "cassandra"
-      host: my-minio-minio.storage.svc.cluster.local
+      host: my-minio-minio.storage.svc
       port: 9000
       secure: false
  

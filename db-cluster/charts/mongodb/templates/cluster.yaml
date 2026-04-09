@@ -94,14 +94,14 @@ spec:
       s3-storage:
         type: {{ $storageType }}
         {{ $storageType }}:
-          bucket: {{ .Values.backup.s3.bucket }}
-          region: {{ .Values.backup.s3.region }}
-          credentialsSecret: {{ .Values.backup.s3.credentialSecret }}
+          bucket: {{ tpl .Values.backup.s3.bucket . | quote }}
+          region: {{ tpl .Values.backup.s3.region . | quote }}
+          credentialsSecret: {{ tpl .Values.backup.s3.credentialSecret . | quote }}
           {{- with .Values.backup.s3.endpointURL }}
-          endpointUrl: {{ . | quote }}
+          endpointUrl: {{ tpl . $ | quote }}
           {{- end }}
           {{- with .Values.backup.s3.prefix }}
-          prefix: {{ . | quote }}
+          prefix: {{ tpl . $ | quote }}
           {{- end }}
     tasks:
     - name: {{ .Values.backup.task.name | default "daily-backup" | quote }}

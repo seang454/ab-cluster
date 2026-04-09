@@ -37,7 +37,30 @@ helm upgrade --install my-minio ./minio \
 If PostgreSQL backups run in the `databases` namespace, also apply:
 
 ```bash
-kubectl apply -f ./minio/externalsecret-databases.yaml
+kubectl apply -f - <<EOF
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: minio-credentials
+  namespace: YOUR_DATABASE_NAMESPACE
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: vault-backend
+  target:
+    name: minio-credentials
+    creationPolicy: Owner
+  data:
+    - secretKey: root-user
+      remoteRef:
+        key: minio
+        property: root-user
+    - secretKey: root-password
+      remoteRef:
+        key: minio
+        property: root-password
+EOF
 ```
 
 ## What it deploys
@@ -72,7 +95,7 @@ bucketProvisioning:
 
 For a PostgreSQL operator that accepts S3-compatible storage settings, point backups at the MinIO service:
 
-- endpoint: `http://my-minio-minio.storage.svc.cluster.local:9000`
+- endpoint: `http://my-minio-minio.storage.svc:9000`
 - bucket: `postgresql-backups`
 - access key: value from the MinIO root user secret
 - secret key: value from the MinIO root password secret

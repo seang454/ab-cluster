@@ -1684,15 +1684,38 @@ minio_deploy() {
     kubectl create namespace "$MINIO_NAMESPACE" 2>/dev/null || true
     kubectl apply -f "$MINIO_CHART_DIR/externalsecret-storage.yaml" \
         || die "Failed to apply MinIO storage ExternalSecret"
-    kubectl apply -f "$MINIO_CHART_DIR/externalsecret-databases.yaml" \
+    kubectl create namespace "$NAMESPACE" 2>/dev/null || true
+    kubectl apply -f - <<EOF \
         || die "Failed to apply MinIO databases ExternalSecret"
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: minio-credentials
+  namespace: $NAMESPACE
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: vault-backend
+  target:
+    name: minio-credentials
+    creationPolicy: Owner
+  data:
+    - secretKey: root-user
+      remoteRef:
+        key: minio
+        property: root-user
+    - secretKey: root-password
+      remoteRef:
+        key: minio
+        property: root-password
+EOF
 
     kubectl wait --for=condition=Ready externalsecret/minio-credentials -n "$MINIO_NAMESPACE" --timeout=180s >/dev/null 2>&1 \
         || die "MinIO storage ExternalSecret did not become Ready"
     retry 18 10 kubectl get secret minio-credentials -n "$MINIO_NAMESPACE" >/dev/null \
         || die "MinIO credentials secret was not created in $MINIO_NAMESPACE"
 
-    kubectl create namespace "$NAMESPACE" 2>/dev/null || true
     kubectl wait --for=condition=Ready externalsecret/minio-credentials -n "$NAMESPACE" --timeout=180s >/dev/null 2>&1 \
         || die "MinIO databases ExternalSecret did not become Ready"
     retry 18 10 kubectl get secret minio-credentials -n "$NAMESPACE" >/dev/null \

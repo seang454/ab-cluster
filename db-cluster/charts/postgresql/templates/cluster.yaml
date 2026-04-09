@@ -90,7 +90,7 @@ spec:
   {{- if .Values.backup.enabled }}
   backup:
     barmanObjectStore:
-      destinationPath: {{ .Values.backup.destinationPath | quote }}
+      destinationPath: {{ tpl .Values.backup.destinationPath . | quote }}
       {{- with .Values.backup.endpointURL }}
       endpointURL: {{ . | quote }}
       {{- end }}
