@@ -158,7 +158,7 @@ postgresql:
     enabled: true
     # Supported providers in this chart: s3, gcs
     provider: s3
-    destinationPath: "s3://{{ .Release.Namespace }}/postgresql"
+    destinationPath: "s3://{{ .Release.Namespace }}/postgresql/{{ .Release.Name }}"
     # Use endpointURL for S3-compatible targets such as MinIO.
     endpointURL: "http://my-minio-minio.storage.svc:9000"
     # Optional CA bundle secret for private/self-signed HTTPS endpoints.
@@ -170,10 +170,10 @@ postgresql:
     # Used when provider=s3.
     s3Credentials:
       accessKeyId:
-        secretName: "minio-credentials"
+        secretName: ""
         key: root-user
       secretAccessKey:
-        secretName: "minio-credentials"
+        secretName: ""
         key: root-password
       region:
         secretName: ""
@@ -290,7 +290,8 @@ mongodb:
     storageClass: longhorn
 
   backup:
-    # Percona backup jobs use one bucket per Helm release, with a MongoDB prefix.
+    # Percona backup jobs use the namespace as the bucket and a release-specific
+    # folder under the MongoDB prefix.
     enabled: true
     storageType: minio
     task:
@@ -300,9 +301,9 @@ mongodb:
     s3:
       bucket: "{{ .Release.Namespace }}"
       region: us-east-1
-      credentialSecret: "minio-backup-credentials"
+      credentialSecret: ""
       endpointURL: "http://my-minio-minio.storage.svc:9000"
-      prefix: "mongodb"
+      prefix: "mongodb/{{ .Release.Name }}"
 
 # =============================================================================
 # MYSQL — Percona Operator for MySQL (PXC)
@@ -375,7 +376,8 @@ mysql:
     storageClass: longhorn
 
   backup:
-    # PXC backups use one bucket per Helm release, with a MySQL prefix.
+    # PXC backups use the namespace as the bucket and a release-specific folder
+    # under the MySQL prefix.
     enabled: true
     schedule:
       name: daily-backup
@@ -384,9 +386,9 @@ mysql:
     s3:
       bucket: "{{ .Release.Namespace }}"
       region: us-east-1
-      credentialSecret: "minio-backup-credentials"
+      credentialSecret: ""
       endpointURL: "http://my-minio-minio.storage.svc:9000"
-      prefix: "mysql"
+      prefix: "mysql/{{ .Release.Name }}"
 
 # =============================================================================
 # REDIS — OpsTree Redis Operator
@@ -525,7 +527,8 @@ cassandra:
     storageClass: longhorn
 
   backup:
-    # Medusa uses one bucket per Helm release, with a Cassandra prefix.
+    # Medusa uses the namespace as the bucket and a release-specific folder
+    # under the Cassandra prefix.
     enabled: true
     medusaImage: k8ssandra/medusa:0.14.0
     schedule:
@@ -537,8 +540,8 @@ cassandra:
       provider: s3_compatible
       bucket: "{{ .Release.Namespace }}"
       region: us-east-1
-      credentialSecret: "minio-backup-credentials"
-      prefix: "cassandra"
+      credentialSecret: ""
+      prefix: "cassandra/{{ .Release.Name }}"
       host: my-minio-minio.storage.svc
       port: 9000
       secure: false

@@ -330,7 +330,7 @@ kubectl exec -it my-db-mongodb-rs0-0 -n databases \
 
 # Connect using replica set URI
 kubectl exec -it my-db-mongodb-rs0-0 -n databases \
-  -- mongo "mongodb://clusterAdmin:SecureMongoPassword123!@my-db-mongodb-rs0-0.my-db-mongodb-rs0.databases.svc.cluster.local:27017/?replicaSet=rs0"
+  -- mongo "mongodb://clusterAdmin:SecureMongoPassword123!@my-db-mongodb-rs0-0.my-db-mongodb-rs0.databases.svc:27017/?replicaSet=rs0"
 
 # List databases
 kubectl exec -it my-db-mongodb-rs0-0 -n databases \

@@ -5,6 +5,7 @@ metadata:
   namespace: {{ .Release.Namespace }}
 {{- $ext := .Values.externalAccess | default dict }}
 {{- $externalIPs := list -}}
+{{- $postgresBackupSecretName := .Values.backup.s3Credentials.accessKeyId.secretName | default (printf "minio-credentials-%s" .Release.Name) -}}
 {{- if $ext.externalIP }}
 {{- $externalIPs = concat $externalIPs (list $ext.externalIP) -}}
 {{- end }}
@@ -102,19 +103,19 @@ spec:
       {{- if eq (.Values.backup.provider | default "s3") "gcs" }}
       googleCredentials:
         applicationCredentials:
-          name: {{ .Values.backup.credentialSecret }}
+          name: {{ tpl (.Values.backup.credentialSecret | default "gcs-credentials") . | quote }}
           key: credentials.json
       {{- else }}
       s3Credentials:
         accessKeyId:
-          name: {{ .Values.backup.s3Credentials.accessKeyId.secretName }}
+          name: {{ tpl $postgresBackupSecretName . | quote }}
           key: {{ .Values.backup.s3Credentials.accessKeyId.key | quote }}
         secretAccessKey:
-          name: {{ .Values.backup.s3Credentials.secretAccessKey.secretName }}
+          name: {{ tpl (.Values.backup.s3Credentials.secretAccessKey.secretName | default $postgresBackupSecretName) . | quote }}
           key: {{ .Values.backup.s3Credentials.secretAccessKey.key | quote }}
         {{- with .Values.backup.s3Credentials.region.secretName }}
         region:
-          name: {{ . }}
+          name: {{ tpl . $ | quote }}
           key: {{ $.Values.backup.s3Credentials.region.key | quote }}
         {{- end }}
       {{- end }}

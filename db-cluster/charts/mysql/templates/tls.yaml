@@ -54,7 +54,6 @@ spec:
   - {{ include "mysql.fullname" . }}-haproxy
   - {{ include "mysql.fullname" . }}-haproxy.{{ .Release.Namespace }}
   - {{ include "mysql.fullname" . }}-haproxy.{{ .Release.Namespace }}.svc
-  - {{ include "mysql.fullname" . }}-haproxy.{{ .Release.Namespace }}.svc.cluster.local
   {{- range ($ext.publicHostnames | default list) }}
   - {{ . }}
   {{- end }}
@@ -84,7 +83,6 @@ spec:
   - "*.{{ include "mysql.fullname" . }}-pxc"
   - "*.{{ include "mysql.fullname" . }}-pxc.{{ .Release.Namespace }}"
   - "*.{{ include "mysql.fullname" . }}-pxc.{{ .Release.Namespace }}.svc"
-  - "*.{{ include "mysql.fullname" . }}-pxc.{{ .Release.Namespace }}.svc.cluster.local"
   {{- range ($ext.publicHostnames | default list) }}
   - {{ . }}
   {{- end }}

@@ -4,6 +4,7 @@
 {{- $instances := int .Values.cluster.instances -}}
 {{- $basePort := int ($horizons.basePort | default 27017) -}}
 {{- $horizonsEnabled := and ($ext.enabled | default false) ($horizons.enabled | default false) (eq (len $publicHosts) $instances) -}}
+{{- $mongodbBackupSecretName := .Values.backup.s3.credentialSecret | default (printf "minio-backup-credentials-%s" .Release.Name) -}}
 apiVersion: psmdb.percona.com/v1
 kind: PerconaServerMongoDB
 metadata:
@@ -96,7 +97,7 @@ spec:
         {{ $storageType }}:
           bucket: {{ tpl .Values.backup.s3.bucket . | quote }}
           region: {{ tpl .Values.backup.s3.region . | quote }}
-          credentialsSecret: {{ tpl .Values.backup.s3.credentialSecret . | quote }}
+          credentialsSecret: {{ tpl $mongodbBackupSecretName . | quote }}
           {{- with .Values.backup.s3.endpointURL }}
           endpointUrl: {{ tpl . $ | quote }}
           {{- end }}

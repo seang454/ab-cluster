@@ -45,7 +45,7 @@ data:
       default_backend postgresql_backend
 
     backend postgresql_backend
-      server postgresql {{ .Release.Name }}-postgresql-rw.{{ .Release.Namespace }}.svc.cluster.local:5432 check resolvers kube_dns init-addr none
+      server postgresql {{ .Release.Name }}-postgresql-rw.{{ .Release.Namespace }}.svc:5432 check resolvers kube_dns init-addr none
     {{ end }}
 
     {{- if and .Values.mysql.enabled ($expose.mysql | default true) }}
@@ -55,7 +55,7 @@ data:
       default_backend mysql_backend
 
     backend mysql_backend
-      server mysql {{ .Release.Name }}-mysql-haproxy.{{ .Release.Namespace }}.svc.cluster.local:3306 check resolvers kube_dns init-addr none
+      server mysql {{ .Release.Name }}-mysql-haproxy.{{ .Release.Namespace }}.svc:3306 check resolvers kube_dns init-addr none
     {{ end }}
 
     {{- if $mongoHorizonsEnabled }}
@@ -71,7 +71,7 @@ data:
 
     {{- range $i, $_ := until (int .Values.mongodb.cluster.instances) }}
     backend mongodb_backend_{{ $i }}
-      server mongodb{{ $i }} {{ $.Release.Name }}-mongodb-rs0-{{ $i }}.{{ $.Release.Name }}-mongodb-rs0.{{ $.Release.Namespace }}.svc.cluster.local:27017 check resolvers kube_dns init-addr none
+      server mongodb{{ $i }} {{ $.Release.Name }}-mongodb-rs0-{{ $i }}.{{ $.Release.Name }}-mongodb-rs0.{{ $.Release.Namespace }}.svc:27017 check resolvers kube_dns init-addr none
     {{- end }}
     {{- else if and .Values.mongodb.enabled ($expose.mongodb | default true) }}
     # Public MongoDB listener -> internal replica set service.
@@ -80,7 +80,7 @@ data:
       default_backend mongodb_backend
 
     backend mongodb_backend
-      server mongodb {{ .Release.Name }}-mongodb-rs0.{{ .Release.Namespace }}.svc.cluster.local:27017 check resolvers kube_dns init-addr none
+      server mongodb {{ .Release.Name }}-mongodb-rs0.{{ .Release.Namespace }}.svc:27017 check resolvers kube_dns init-addr none
     {{ end }}
 
     {{- if and .Values.redis.enabled ($expose.redis | default true) }}
@@ -90,7 +90,7 @@ data:
       default_backend redis_backend
 
     backend redis_backend
-      server redis {{ .Release.Name }}-redis-leader.{{ .Release.Namespace }}.svc.cluster.local:6379 check resolvers kube_dns init-addr none
+      server redis {{ .Release.Name }}-redis-leader.{{ .Release.Namespace }}.svc:6379 check resolvers kube_dns init-addr none
     {{ end }}
 
     {{- if and .Values.cassandra.enabled ($expose.cassandra | default true) }}
@@ -100,7 +100,7 @@ data:
       default_backend cassandra_backend
 
     backend cassandra_backend
-      server cassandra {{ $cassandraCluster }}-{{ $cassandraDatacenter }}-service.{{ .Release.Namespace }}.svc.cluster.local:9042 check resolvers kube_dns init-addr none
+      server cassandra {{ $cassandraCluster }}-{{ $cassandraDatacenter }}-service.{{ .Release.Namespace }}.svc:9042 check resolvers kube_dns init-addr none
     {{ end }}
 ---
 apiVersion: apps/v1

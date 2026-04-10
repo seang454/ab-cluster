@@ -88,7 +88,7 @@ ingress:
 
 bucketProvisioning:
   enabled: true
-  bucket: postgresql-backups
+  bucket: databases
 ```
 
 ## PostgreSQL backup example
@@ -96,8 +96,13 @@ bucketProvisioning:
 For a PostgreSQL operator that accepts S3-compatible storage settings, point backups at the MinIO service:
 
 - endpoint: `http://my-minio-minio.storage.svc:9000`
-- bucket: `postgresql-backups`
+- bucket: your database namespace, for example `ns-seang-postgres`
 - access key: value from the MinIO root user secret
 - secret key: value from the MinIO root password secret
 
 The exact PostgreSQL backup YAML depends on the operator you use.
+
+When you deploy MinIO through `./setup.sh`, the script overrides
+`bucketProvisioning.bucket` to the active database namespace automatically.
+For manual installs, set `bucketProvisioning.bucket` yourself to match the
+namespace used by your database release.

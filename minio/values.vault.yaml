@@ -5,4 +5,5 @@ auth:
 
 bucketProvisioning:
   enabled: true
-  bucket: postgresql-backups
+  # setup.sh overrides this to the active database namespace.
+  bucket: databases

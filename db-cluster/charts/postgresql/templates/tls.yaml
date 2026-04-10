@@ -56,15 +56,12 @@ spec:
   - {{ include "postgresql.fullname" . }}-rw
   - {{ include "postgresql.fullname" . }}-rw.{{ .Release.Namespace }}
   - {{ include "postgresql.fullname" . }}-rw.{{ .Release.Namespace }}.svc
-  - {{ include "postgresql.fullname" . }}-rw.{{ .Release.Namespace }}.svc.cluster.local
   - {{ include "postgresql.fullname" . }}-ro
   - {{ include "postgresql.fullname" . }}-ro.{{ .Release.Namespace }}
   - {{ include "postgresql.fullname" . }}-ro.{{ .Release.Namespace }}.svc
-  - {{ include "postgresql.fullname" . }}-ro.{{ .Release.Namespace }}.svc.cluster.local
   - {{ include "postgresql.fullname" . }}-r
   - {{ include "postgresql.fullname" . }}-r.{{ .Release.Namespace }}
   - {{ include "postgresql.fullname" . }}-r.{{ .Release.Namespace }}.svc
-  - {{ include "postgresql.fullname" . }}-r.{{ .Release.Namespace }}.svc.cluster.local
   {{- range ($ext.publicHostnames | default list) }}
   - {{ . }}
   {{- end }}

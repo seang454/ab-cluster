@@ -57,7 +57,9 @@ bucketProvisioning:
     repository: quay.io/minio/mc
     tag: RELEASE.2025-08-13T08-35-41Z
     pullPolicy: IfNotPresent
-  bucket: postgresql-backups
+  # Default bucket name for manual installs. setup.sh overrides this to the
+  # active database namespace so each namespace gets its own bucket.
+  bucket: databases
   region: us-east-1
   versioning: true
   policy: private

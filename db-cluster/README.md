@@ -102,14 +102,14 @@ postgresql:
   backup:
     enabled: true
     provider: s3
-    destinationPath: "s3://postgresql-backups/postgresql"
+    destinationPath: "s3://{{ .Release.Namespace }}/postgresql/{{ .Release.Name }}"
     endpointURL: "http://my-minio-minio.storage.svc:9000"
     s3Credentials:
       accessKeyId:
-        secretName: my-minio-minio-auth
+        secretName: minio-credentials-<release-name>
         key: root-user
       secretAccessKey:
-        secretName: my-minio-minio-auth
+        secretName: minio-credentials-<release-name>
         key: root-password
     retentionPolicy: "7d"
     schedule:
@@ -119,6 +119,11 @@ postgresql:
 
 If MinIO is exposed over HTTPS with a private CA, also set
 `postgresql.backup.endpointCA.secretName`.
+
+The chart computes release-scoped credential secret names by default, such as
+`minio-credentials-<release-name>` and
+`minio-backup-credentials-<release-name>`, so multiple releases can coexist in
+the same namespace without secret-name collisions.
 
 CloudNativePG scheduled backups use a six-field cron format with seconds:
 

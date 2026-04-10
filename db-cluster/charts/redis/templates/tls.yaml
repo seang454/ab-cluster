@@ -54,7 +54,6 @@ spec:
   - {{ include "redis.fullname" . }}-leader
   - {{ include "redis.fullname" . }}-leader.{{ .Release.Namespace }}
   - {{ include "redis.fullname" . }}-leader.{{ .Release.Namespace }}.svc
-  - {{ include "redis.fullname" . }}-leader.{{ .Release.Namespace }}.svc.cluster.local
   {{- range ($ext.publicHostnames | default list) }}
   - {{ . }}
   {{- end }}
