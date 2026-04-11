@@ -87,6 +87,10 @@ cassandra:
 - If you are using Spring or another caller to deploy the OCI chart, point it
   at the new chart version and keep the override file to non-empty request
   fields only.
+- Backup-capable databases in this chart now default to the S3 layout
+  `s3://<namespace>/<releaseName>/<clusterName>`. PostgreSQL uses a full
+  `destinationPath`, while MongoDB, MySQL, and Cassandra use the namespace as
+  the bucket and `<releaseName>/<clusterName>` as the prefix.
 
 ## PostgreSQL Backups To MinIO
 
@@ -102,7 +106,7 @@ postgresql:
   backup:
     enabled: true
     provider: s3
-    destinationPath: "s3://{{ .Release.Namespace }}/postgresql/{{ .Release.Name }}"
+    destinationPath: "s3://{{ .Release.Namespace }}/{{ .Release.Name }}/{{ include \"postgresql.fullname\" . }}"
     endpointURL: "http://my-minio-minio.storage.svc:9000"
     s3Credentials:
       accessKeyId:

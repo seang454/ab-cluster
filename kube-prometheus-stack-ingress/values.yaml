@@ -1,0 +1,21 @@
+issuer:
+  enabled: true
+  email: pengseangsim210@gmail.com
+  name: argocd-letsencrypt-prod
+  server: https://acme-v02.api.letsencrypt.org/directory
+  ingressClass: nginx
+
+ingress:
+  name: kube-prometheus-stack-ingress
+  ingressClassName: nginx
+  clusterIssuer: argocd-letsencrypt-prod
+  tlsSecret: kube-prometheus-stack-tls
+  annotations: {}
+  prometheus:
+    host: prometheus.seang.shop
+    serviceName: prometheus-stack-release-k-prometheus
+    servicePort: 9090
+  grafana:
+    host: grafana.seang.shop
+    serviceName: prometheus-stack-release-grafana
+    servicePort: 80

@@ -158,7 +158,7 @@ postgresql:
     enabled: true
     # Supported providers in this chart: s3, gcs
     provider: s3
-    destinationPath: "s3://{{ .Release.Namespace }}/postgresql/{{ .Release.Name }}"
+    destinationPath: "s3://{{ .Release.Namespace }}/{{ .Release.Name }}/{{ include \"postgresql.fullname\" . }}"
     # Use endpointURL for S3-compatible targets such as MinIO.
     endpointURL: "http://my-minio-minio.storage.svc:9000"
     # Optional CA bundle secret for private/self-signed HTTPS endpoints.
@@ -290,8 +290,8 @@ mongodb:
     storageClass: longhorn
 
   backup:
-    # Percona backup jobs use the namespace as the bucket and a release-specific
-    # folder under the MongoDB prefix.
+    # Percona backup jobs use the namespace as the bucket and store backups
+    # under <release>/<cluster>.
     enabled: true
     storageType: minio
     task:
@@ -303,7 +303,7 @@ mongodb:
       region: us-east-1
       credentialSecret: ""
       endpointURL: "http://my-minio-minio.storage.svc:9000"
-      prefix: "mongodb/{{ .Release.Name }}"
+      prefix: "{{ .Release.Name }}/{{ include \"mongodb.fullname\" . }}"
 
 # =============================================================================
 # MYSQL — Percona Operator for MySQL (PXC)
@@ -376,8 +376,8 @@ mysql:
     storageClass: longhorn
 
   backup:
-    # PXC backups use the namespace as the bucket and a release-specific folder
-    # under the MySQL prefix.
+    # PXC backups use the namespace as the bucket and store backups under
+    # <release>/<cluster>.
     enabled: true
     schedule:
       name: daily-backup
@@ -388,7 +388,7 @@ mysql:
       region: us-east-1
       credentialSecret: ""
       endpointURL: "http://my-minio-minio.storage.svc:9000"
-      prefix: "mysql/{{ .Release.Name }}"
+      prefix: "{{ .Release.Name }}/{{ include \"mysql.fullname\" . }}"
 
 # =============================================================================
 # REDIS — OpsTree Redis Operator
@@ -527,8 +527,8 @@ cassandra:
     storageClass: longhorn
 
   backup:
-    # Medusa uses the namespace as the bucket and a release-specific folder
-    # under the Cassandra prefix.
+    # Medusa uses the namespace as the bucket and stores backups under
+    # <release>/<cluster>.
     enabled: true
     medusaImage: k8ssandra/medusa:0.14.0
     schedule:
@@ -541,7 +541,7 @@ cassandra:
       bucket: "{{ .Release.Namespace }}"
       region: us-east-1
       credentialSecret: ""
-      prefix: "cassandra/{{ .Release.Name }}"
+      prefix: "{{ .Release.Name }}/{{ include \"cassandra.fullname\" . }}"
       host: my-minio-minio.storage.svc
       port: 9000
       secure: false
