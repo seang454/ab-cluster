@@ -35,7 +35,15 @@ spec:
             - -c
             - |
               set -eu
-              mc alias set local http://{{ include "minio.fullname" . }}:{{ .Values.service.apiPort }} "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
+              attempts=0
+              until mc alias set local http://{{ include "minio.fullname" . }}:{{ .Values.service.apiPort }} "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null 2>&1; do
+                attempts=$((attempts + 1))
+                if [ "$attempts" -ge 60 ]; then
+                  echo "MinIO API did not become reachable in time" >&2
+                  exit 1
+                fi
+                sleep 2
+              done
               mc mb --ignore-existing local/{{ .Values.bucketProvisioning.bucket }}
               {{- if .Values.bucketProvisioning.versioning }}
               mc version enable local/{{ .Values.bucketProvisioning.bucket }}

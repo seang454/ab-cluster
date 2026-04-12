@@ -97,7 +97,7 @@ spec:
         s3:
           bucket: {{ tpl .Values.backup.s3.bucket . | quote }}
           region: {{ tpl .Values.backup.s3.region . | quote }}
-          credentialsSecret: {{ tpl (.Values.backup.s3.credentialSecret | default (printf "minio-backup-credentials-%s" .Release.Name)) . | quote }}
+          credentialsSecret: {{ tpl (.Values.backup.s3.credentialSecret | default (printf "minio-credentials-%s" .Release.Name)) . | quote }}
           {{- with .Values.backup.s3.endpointURL }}
           endpointUrl: {{ tpl . $ | quote }}
           {{- end }}

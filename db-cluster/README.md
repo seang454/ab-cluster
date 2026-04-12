@@ -124,13 +124,16 @@ postgresql:
 If MinIO is exposed over HTTPS with a private CA, also set
 `postgresql.backup.endpointCA.secretName`.
 
-The chart computes release-scoped credential secret names by default, such as
-`minio-credentials-<release-name>` and
-`minio-backup-credentials-<release-name>`, so multiple releases can coexist in
-the same namespace without secret-name collisions.
+The chart computes a release-scoped MinIO credential secret name by default:
+`minio-credentials-<release-name>`. That single Secret includes both the raw
+keys used by PostgreSQL and the rendered `credentials` file used by MongoDB,
+MySQL, and Cassandra, so multiple releases can coexist in the same namespace
+without secret-name collisions.
 
 CloudNativePG scheduled backups use a six-field cron format with seconds:
 
 - Daily at 02:00 UTC: `0 0 2 * * *`
 - Every 6 hours: `0 0 */6 * * *`
 - Weekly at 03:00 UTC on Sunday: `0 0 3 * * 0`
+
+can I deploy like this when I release the the whole chart for the subchart it should be apply specificly on the chart I run request to deploy should not effect to other chart if the reqest from API DO NOT REQEUST it but please keep still deploy the whole helm chart that store to database cluster but effect the subchart of each cluster on the request parth from api (request like push , get , patch , etc)

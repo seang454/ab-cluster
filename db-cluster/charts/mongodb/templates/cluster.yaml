@@ -4,7 +4,7 @@
 {{- $instances := int .Values.cluster.instances -}}
 {{- $basePort := int ($horizons.basePort | default 27017) -}}
 {{- $horizonsEnabled := and ($ext.enabled | default false) ($horizons.enabled | default false) (eq (len $publicHosts) $instances) -}}
-{{- $mongodbBackupSecretName := .Values.backup.s3.credentialSecret | default (printf "minio-backup-credentials-%s" .Release.Name) -}}
+{{- $mongodbBackupSecretName := .Values.backup.s3.credentialSecret | default (printf "minio-credentials-%s" .Release.Name) -}}
 apiVersion: psmdb.percona.com/v1
 kind: PerconaServerMongoDB
 metadata:

@@ -90,7 +90,7 @@ spec:
       bucketName: {{ tpl .Values.backup.s3.bucket . | quote }}
       region: {{ tpl .Values.backup.s3.region . | quote }}
       storageSecretRef:
-        name: {{ tpl (.Values.backup.s3.credentialSecret | default (printf "minio-backup-credentials-%s" .Release.Name)) . | quote }}
+        name: {{ tpl (.Values.backup.s3.credentialSecret | default (printf "minio-credentials-%s" .Release.Name)) . | quote }}
       prefix: {{ tpl .Values.backup.s3.prefix . | quote }}
       {{- if eq (.Values.backup.s3.provider | default "s3_compatible") "s3_compatible" }}
       host: {{ tpl .Values.backup.s3.host . | quote }}
