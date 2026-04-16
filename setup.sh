@@ -56,6 +56,28 @@ retry() {
     return 1
 }
 
+wait_for_externalsecret_stable() {
+    local namespace="$1"
+    local name="$2"
+    local deletion_timestamp
+
+    for i in $(seq 1 36); do
+        if ! kubectl get externalsecret "$name" -n "$namespace" >/dev/null 2>&1; then
+            return 0
+        fi
+
+        deletion_timestamp="$(kubectl get externalsecret "$name" -n "$namespace" -o jsonpath='{.metadata.deletionTimestamp}' 2>/dev/null || true)"
+        if [ -z "$deletion_timestamp" ]; then
+            return 0
+        fi
+
+        info "ExternalSecret $namespace/$name is terminating; waiting 5s for deletion to finish..."
+        sleep 5
+    done
+
+    return 1
+}
+
 values_args() {
     local DEFAULT_VALUES="$CHART_DIR/values.yaml"
     [ -f "$DEFAULT_VALUES" ] || die "Default values file not found: $DEFAULT_VALUES"
@@ -1682,9 +1704,13 @@ minio_deploy() {
         || die "Vault ClusterSecretStore vault-backend is not Ready"
 
     kubectl create namespace "$MINIO_NAMESPACE" 2>/dev/null || true
+    wait_for_externalsecret_stable "$MINIO_NAMESPACE" minio-credentials \
+        || die "Timed out waiting for terminating MinIO storage ExternalSecret to be deleted"
     kubectl apply -f "$MINIO_CHART_DIR/externalsecret-storage.yaml" \
         || die "Failed to apply MinIO storage ExternalSecret"
     kubectl create namespace "$NAMESPACE" 2>/dev/null || true
+    wait_for_externalsecret_stable "$NAMESPACE" minio-credentials \
+        || die "Timed out waiting for terminating MinIO databases ExternalSecret to be deleted"
     kubectl apply -f - <<EOF \
         || die "Failed to apply MinIO databases ExternalSecret"
 apiVersion: external-secrets.io/v1
