@@ -38,6 +38,50 @@ die() {
   exit 1
 }
 
+retry_cmd() {
+  local attempts="$1"
+  local delay="$2"
+  shift 2
+
+  local try rc
+  for try in $(seq 1 "$attempts"); do
+    if "$@"; then
+      return 0
+    fi
+    rc=$?
+    if [ "$try" -lt "$attempts" ]; then
+      echo "    attempt $try/$attempts failed; retrying in ${delay}s..."
+      sleep "$delay"
+    fi
+  done
+
+  return "$rc"
+}
+
+helm_upgrade_install_with_retry() {
+  local release="$1"
+  local namespace="$2"
+  shift 2
+
+  local attempts="${HELM_INSTALL_RETRIES:-4}"
+  local delay="${HELM_INSTALL_RETRY_DELAY:-15}"
+  local try
+
+  for try in $(seq 1 "$attempts"); do
+    if helm upgrade --install "$release" "$@" --namespace "$namespace"; then
+      return 0
+    fi
+
+    if [ "$try" -lt "$attempts" ]; then
+      cleanup_pending_release "$release" "$namespace"
+      echo "    Helm install for $release failed on attempt $try/$attempts; retrying in ${delay}s..."
+      sleep "$delay"
+    fi
+  done
+
+  return 1
+}
+
 require_bin() {
   command -v "$1" >/dev/null 2>&1 || die "Missing required command: $1"
 }
@@ -136,40 +180,41 @@ repos() {
   helm repo add ot-helm https://ot-container-kit.github.io/helm-charts/ >/dev/null 2>&1 || true
   helm repo add k8ssandra https://helm.k8ssandra.io/stable >/dev/null 2>&1 || true
   helm repo add jetstack https://charts.jetstack.io >/dev/null 2>&1 || true
-  helm repo update >/dev/null
+  retry_cmd "${HELM_REPO_UPDATE_RETRIES:-4}" "${HELM_REPO_UPDATE_RETRY_DELAY:-10}" helm repo update >/dev/null \
+    || die "Failed to update Helm repositories"
   ok "Helm repos ready"
 }
 
 install_cnpg() {
   skip_if_deployed cnpg "$CNPG_NAMESPACE" "CloudNativePG operator" && return 0
   log "Installing CloudNativePG operator"
-  helm upgrade --install cnpg cnpg/cloudnative-pg \
-    --namespace "$CNPG_NAMESPACE" \
+  helm_upgrade_install_with_retry cnpg "$CNPG_NAMESPACE" cnpg/cloudnative-pg \
     --create-namespace \
     --version "$CNPG_VERSION" \
-    --wait --timeout 5m
+    --wait --timeout 5m \
+    || die "Failed to install CloudNativePG operator"
   ok "CloudNativePG installed in namespace $CNPG_NAMESPACE"
 }
 
 install_psmdb() {
   skip_if_deployed psmdb-operator "$PSMDB_NAMESPACE" "Percona PSMDB operator" && return 0
   log "Installing Percona PSMDB operator"
-  helm upgrade --install psmdb-operator percona/psmdb-operator \
-    --namespace "$PSMDB_NAMESPACE" \
+  helm_upgrade_install_with_retry psmdb-operator "$PSMDB_NAMESPACE" percona/psmdb-operator \
     --create-namespace \
     --version "$PSMDB_VERSION" \
-    --wait --timeout 5m
+    --wait --timeout 5m \
+    || die "Failed to install Percona PSMDB operator"
   ok "Percona PSMDB installed in namespace $PSMDB_NAMESPACE"
 }
 
 install_pxc() {
   skip_if_deployed pxc-operator "$PXC_NAMESPACE" "Percona PXC operator" && return 0
   log "Installing Percona PXC operator"
-  helm upgrade --install pxc-operator percona/pxc-operator \
-    --namespace "$PXC_NAMESPACE" \
+  helm_upgrade_install_with_retry pxc-operator "$PXC_NAMESPACE" percona/pxc-operator \
     --create-namespace \
     --version "$PXC_VERSION" \
-    --wait --timeout 5m
+    --wait --timeout 5m \
+    || die "Failed to install Percona PXC operator"
   ok "Percona PXC installed in namespace $PXC_NAMESPACE"
 }
 
@@ -179,8 +224,7 @@ install_redis_operator() {
   fi
   cleanup_pending_release redis-operator "$REDIS_NAMESPACE"
   log "Installing OpsTree Redis operator"
-  helm upgrade --install redis-operator ot-helm/redis-operator \
-    --namespace "$REDIS_NAMESPACE" \
+  helm_upgrade_install_with_retry redis-operator "$REDIS_NAMESPACE" ot-helm/redis-operator \
     --create-namespace \
     --version "$REDIS_OPERATOR_VERSION" \
     --set "featureGates.GenerateConfigInInitContainer=true" \
@@ -188,7 +232,8 @@ install_redis_operator() {
     --set "resources.requests.memory=$REDIS_OPERATOR_REQUEST_MEMORY" \
     --set "resources.limits.cpu=$REDIS_OPERATOR_LIMIT_CPU" \
     --set "resources.limits.memory=$REDIS_OPERATOR_LIMIT_MEMORY" \
-    --wait --timeout "$REDIS_OPERATOR_TIMEOUT"
+    --wait --timeout "$REDIS_OPERATOR_TIMEOUT" \
+    || die "Failed to install Redis operator"
   ok "Redis operator installed in namespace $REDIS_NAMESPACE"
 }
 
@@ -199,12 +244,12 @@ ensure_cert_manager() {
   fi
 
   log "Installing cert-manager (required by K8ssandra)"
-  helm upgrade --install cert-manager jetstack/cert-manager \
-    --namespace "$CERT_MANAGER_NAMESPACE" \
+  helm_upgrade_install_with_retry cert-manager "$CERT_MANAGER_NAMESPACE" jetstack/cert-manager \
     --create-namespace \
     --version "$CERT_MANAGER_VERSION" \
     --set crds.enabled=true \
-    --wait --timeout 10m
+    --wait --timeout 10m \
+    || die "Failed to install cert-manager"
   ok "cert-manager installed in namespace $CERT_MANAGER_NAMESPACE"
 }
 
@@ -212,11 +257,11 @@ install_k8ssandra() {
   ensure_cert_manager
   skip_if_deployed k8ssandra-operator "$K8SSANDRA_NAMESPACE" "K8ssandra operator" && return 0
   log "Installing K8ssandra operator"
-  helm upgrade --install k8ssandra-operator k8ssandra/k8ssandra-operator \
-    --namespace "$K8SSANDRA_NAMESPACE" \
+  helm_upgrade_install_with_retry k8ssandra-operator "$K8SSANDRA_NAMESPACE" k8ssandra/k8ssandra-operator \
     --create-namespace \
     --version "$K8SSANDRA_VERSION" \
-    --wait --timeout 5m
+    --wait --timeout 5m \
+    || die "Failed to install K8ssandra operator"
   ok "K8ssandra operator installed in namespace $K8SSANDRA_NAMESPACE"
 }
 
