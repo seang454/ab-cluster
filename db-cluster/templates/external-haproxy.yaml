@@ -8,6 +8,18 @@
 {{- $mongoHorizons := get $mongoExt "replicaSetHorizons" | default dict -}}
 {{- $mongoPublicHosts := $mongoExt.publicHostnames | default list -}}
 {{- $mongoHorizonsEnabled := and .Values.mongodb.enabled ($expose.mongodb | default true) ($mongoExt.enabled | default false) ($mongoHorizons.enabled | default false) (gt (len $mongoPublicHosts) 0) -}}
+{{- $pg := .Values.postgresql | default dict -}}
+{{- $pgProxy := get $proxy "postgresql" | default dict -}}
+{{- $proxyClusterDomain := get $proxy "clusterDomain" | default "" -}}
+{{- $pgExternalBackendAddress := get $pgProxy "backendAddress" | default "" -}}
+{{- $pgExternalBackendService := get $pgProxy "backendServiceName" | default (printf "%s-postgresql-rw" .Release.Name) -}}
+{{- $pgExternalBackendHost := printf "%s.%s.svc" $pgExternalBackendService .Release.Namespace -}}
+{{- if $proxyClusterDomain -}}
+{{- $pgExternalBackendHost = printf "%s.%s" $pgExternalBackendHost $proxyClusterDomain -}}
+{{- end -}}
+{{- if $pgExternalBackendAddress -}}
+{{- $pgExternalBackendHost = $pgExternalBackendAddress -}}
+{{- end -}}
 {{- if $proxy.enabled }}
 # Shared external TCP proxy for database traffic.
 # This object is separate from the database operators and only forwards raw TCP
@@ -45,7 +57,10 @@ data:
       default_backend postgresql_backend
 
     backend postgresql_backend
-      server postgresql {{ .Release.Name }}-postgresql-rw.{{ .Release.Namespace }}.svc:5432 check resolvers kube_dns init-addr none
+      # Use plain TCP passthrough to the CNPG RW service. Active HAProxy health
+      # checks were marking this single backend unavailable even though the
+      # service was reachable from inside the proxy pod.
+      server postgresql {{ $pgExternalBackendHost }}:5432 resolvers kube_dns resolve-prefer ipv4 init-addr libc,none
     {{ end }}
 
     {{- if and .Values.mysql.enabled ($expose.mysql | default true) }}

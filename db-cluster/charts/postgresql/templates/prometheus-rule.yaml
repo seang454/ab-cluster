@@ -1,0 +1,45 @@
+{{- if and .Values.alerts.enabled .Values.alerts.storage.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "postgresql.fullname" . }}-alerts
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    cnpg.io/cluster: {{ include "postgresql.fullname" . }}
+    {{- with .Values.alerts.prometheusRuleLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+  - name: {{ include "postgresql.fullname" . }}.storage.rules
+    rules:
+    - alert: CloudNativePGPVCUsageHigh
+      expr: |
+        (
+          kubelet_volume_stats_used_bytes{namespace="{{ .Release.Namespace }}", persistentvolumeclaim=~"{{ include "postgresql.fullname" . }}-.*"}
+          /
+          kubelet_volume_stats_capacity_bytes{namespace="{{ .Release.Namespace }}", persistentvolumeclaim=~"{{ include "postgresql.fullname" . }}-.*"}
+        ) * 100 > {{ .Values.alerts.storage.warningPercent }}
+      for: {{ .Values.alerts.storage.for }}
+      labels:
+        severity: warning
+        service: cloudnativepg
+      annotations:
+        summary: "CloudNativePG PVC usage is above {{ .Values.alerts.storage.warningPercent }}%"
+        description: "PVC {{ `{{ $labels.persistentvolumeclaim }}` }} in namespace {{ `{{ $labels.namespace }}` }} is {{ `{{ $value | printf \"%.1f\" }}` }}% full."
+    - alert: CloudNativePGPVCUsageCritical
+      expr: |
+        (
+          kubelet_volume_stats_used_bytes{namespace="{{ .Release.Namespace }}", persistentvolumeclaim=~"{{ include "postgresql.fullname" . }}-.*"}
+          /
+          kubelet_volume_stats_capacity_bytes{namespace="{{ .Release.Namespace }}", persistentvolumeclaim=~"{{ include "postgresql.fullname" . }}-.*"}
+        ) * 100 > {{ .Values.alerts.storage.criticalPercent }}
+      for: {{ .Values.alerts.storage.for }}
+      labels:
+        severity: critical
+        service: cloudnativepg
+      annotations:
+        summary: "CloudNativePG PVC usage is above {{ .Values.alerts.storage.criticalPercent }}%"
+        description: "PVC {{ `{{ $labels.persistentvolumeclaim }}` }} in namespace {{ `{{ $labels.namespace }}` }} is {{ `{{ $value | printf \"%.1f\" }}` }}% full. Immediate action is required."
+{{- end }}

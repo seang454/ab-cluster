@@ -555,67 +555,19 @@ alertmanager:
         - send_resolved: true
           bot_token: "8575107181:AAFAkQ6VKNc7kWcmv8t1hRDYZc0TuqLX7Zs"
           chat_id: 1707535552
-          parse_mode: "HTML"
+          parse_mode: ""
           message: |-
             {{ range .Alerts }}
-            {{ if eq .Status "firing" }}
-            🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴
-            ⚡️ <b>INCIDENT DETECTED</b> ⚡️
-            🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴
-            {{ else }}
-            🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢
-            🎉 <b>INCIDENT RESOLVED</b> 🎉
-            🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢🟢
-            {{ end }}
+            [{{ .Status | toUpper }}] {{ .Labels.alertname }}
+            Severity: {{ .Labels.severity }}
+            Namespace: {{ .Labels.namespace }}
+            Service: {{ .Labels.job }}
+            Instance: {{ .Labels.instance }}
+            Summary: {{ .Annotations.summary }}
+            Description: {{ .Annotations.description }}
+            Started: {{ .StartsAt.Format "2006-01-02 15:04:05 UTC" }}
+            Graph: {{ .GeneratorURL }}
 
-            {{ if eq .Labels.severity "critical" }}╔⚠️  <b>CRITICAL ALERT</b>  ⚠️╗{{ else if eq .Labels.severity "warning" }}╔🟡  <b>WARNING ALERT</b>  🟡╗{{ else }}╔ℹ️  <b>INFO ALERT</b>  ℹ️╗{{ end }}
-            ║  <b>{{ .Annotations.summary }}</b>
-            ╚═══════════════════════════╝
-
-            ╭─────────────────────────────╮
-            │  📍 <b>LOCATION</b>
-            ├─────────────────────────────┤
-            │  🏢  <b>Namespace</b>
-            │       └─ <code>{{ .Labels.namespace }}</code>
-            │  ⚙️  <b>Service</b>
-            │       └─ <code>{{ .Labels.job }}</code>
-            │  🖥  <b>Host</b>
-            │       └─ <code>{{ .Labels.instance }}</code>
-            ╰─────────────────────────────╯
-
-            ╭─────────────────────────────╮
-            │  📋 <b>DESCRIPTION</b>
-            ├─────────────────────────────┤
-            │  <i>{{ .Annotations.description }}</i>
-            ╰─────────────────────────────╯
-
-            ╭─────────────────────────────╮
-            │  🕐 <b>TIMELINE</b>
-            ├─────────────────────────────┤
-            │  🚀 <b>Started</b>
-            │       └─ <code>{{ .StartsAt.Format "02 Jan 2006 · 15:04:05 UTC" }}</code>
-            {{ if eq .Status "firing" }}│  ⏳ <b>Status</b>
-            │       └─ <code>Still Ongoing 🔴</code>{{ else }}│  🏁 <b>Resolved</b>
-            │       └─ <code>{{ .EndsAt.Format "02 Jan 2006 · 15:04:05 UTC" }}</code>{{ end }}
-            ╰─────────────────────────────╯
-
-            ╭─────────────────────────────╮
-            │  🏷 <b>LABELS</b>
-            ├─────────────────────────────┤
-            {{ range .Labels.SortedPairs }}│  <code>{{ .Name }}</code>  ═  <code>{{ .Value }}</code>
-            {{ end }}╰─────────────────────────────╯
-
-            ╭─────────────────────────────╮
-            │  🔗 <b>QUICK ACTIONS</b>
-            ├─────────────────────────────┤
-            │  <a href="{{ .GeneratorURL }}">📊 View Graph</a>  {{ if .Annotations.runbook }}│  <a href="{{ .Annotations.runbook }}">📖 View Runbook</a>  {{ end }}│  <a href="{{ .GeneratorURL }}">🔕 Silence Alert</a>
-            ╰─────────────────────────────╯
-
-            {{ if eq .Status "firing" }}
-            ⚡️⚡️  <b>ACTION REQUIRED — Please investigate immediately</b>  ⚡️⚡️
-            {{ else }}
-            ✨✨  <b>All clear — incident has been resolved</b>  ✨✨
-            {{ end }}
             {{ end }}
 
     templates:
@@ -4249,7 +4201,7 @@ prometheus:
     ## prometheus resource to be created with selectors based on values in the helm deployment,
     ## which will also match the servicemonitors created
     ##
-    serviceMonitorSelectorNilUsesHelmValues: true
+    serviceMonitorSelectorNilUsesHelmValues: false
 
     ## ServiceMonitors to be selected for target discovery.
     ## If {}, select all ServiceMonitors
@@ -4272,7 +4224,7 @@ prometheus:
     ## prometheus resource to be created with selectors based on values in the helm deployment,
     ## which will also match the podmonitors created
     ##
-    podMonitorSelectorNilUsesHelmValues: true
+    podMonitorSelectorNilUsesHelmValues: false
 
     ## PodMonitors to be selected for target discovery.
     ## If {}, select all PodMonitors
@@ -5546,4 +5498,3 @@ extraManifests: null
   #   data:
   #     plaintext: Zm9vYmFy
   #     templated: '{{ print "foobar" | upper | b64enc }}'
-

@@ -15,6 +15,7 @@ metadata:
 spec:
   instances: {{ .Values.cluster.instances }}
   imageName: {{ .Values.cluster.imageName }}
+  enableSuperuserAccess: {{ .Values.cluster.enableSuperuserAccess | default false }}
   {{- if and .Values.tls.enabled (ne (.Values.tls.mode | default "certManager") "operator") }}
   certificates:
     serverTLSSecret: {{ include "postgresql.serverTLSSecretName" . }}
@@ -83,7 +84,7 @@ spec:
       memory: {{ .Values.cluster.resources.limits.memory }}
 
   monitoring:
-    enablePodMonitor: {{ .Values.cluster.monitoring.enabled }}
+    enablePodMonitor: {{ .Values.cluster.monitoring.enablePodMonitor }}
 
   switchoverDelay: {{ .Values.cluster.switchoverDelay }}
   failoverDelay: {{ .Values.cluster.failoverDelay }}

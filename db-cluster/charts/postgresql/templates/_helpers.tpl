@@ -45,3 +45,12 @@
 {{- printf "%s-external-rw" (include "postgresql.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 {{- end -}}
+
+{{- define "postgresql.readWriteServiceName" -}}
+{{- printf "%s-rw" (include "postgresql.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "postgresql.poolerName" -}}
+{{- $name := .Values.pooler.name | default "pooler-rw" -}}
+{{- printf "%s-%s" (include "postgresql.fullname" .) $name | trunc 63 | trimSuffix "-" -}}
+{{- end -}}

@@ -33,16 +33,19 @@ externalTcpProxy:
   # accept raw database TCP traffic such as 5432.
   hostNetwork: true
   dnsPolicy: ClusterFirstWithHostNet
-  # Leave empty by default so the proxy can land on any suitable node.
-  # Set labels here only if you intentionally want to pin public DB traffic
-  # to a specific subset of nodes.
-  nodeSelector: {}
+  # Pin the public TCP proxy to the same node your external DNS record points to.
+  # postgres-db.seang.shop currently resolves to worker03's public IP.
+  nodeSelector:
+    kubernetes.io/hostname: worker03
   tolerations: []
   affinity: {}
   resources: {}
   service:
     enabled: false
     type: ClusterIP
+  # Set the Kubernetes cluster domain so HAProxy can resolve service backends
+  # with a fully qualified name instead of relying on search domains.
+  clusterDomain: k8scluster
   expose:
     # Enable only the database ports you actually want HAProxy to publish.
     postgresql: true
@@ -58,6 +61,10 @@ externalTcpProxy:
     redis: 6379
     # Cassandra uses the standard 9042 port through HAProxy.
     cassandra: 9042
+  postgresql:
+    # Leave empty to derive the backend dynamically as:
+    # <release>-postgresql-rw
+    backendServiceName: ""
   timeouts:
     connect: 10s
     client: 1m
@@ -67,7 +74,8 @@ externalTcpProxy:
 # POSTGRESQL — CloudNativePG Operator
 # =============================================================================
 postgresql:
-  # PostgreSQL stays disabled here unless you explicitly turn it on.
+  # Enable PostgreSQL for the seang release so the external TCP proxy renders
+  # the PostgreSQL listener/backend on every deploy.
   enabled: false
   operator:
     enabled: false
@@ -105,6 +113,7 @@ postgresql:
   cluster:
     instances: 3
     imageName: ghcr.io/cloudnative-pg/postgresql:16.2
+    enableSuperuserAccess: true
 
     postgresql:
       max_connections: "100"
@@ -117,7 +126,7 @@ postgresql:
       random_page_cost: "1.1"
       effective_io_concurrency: "200"
       work_mem: "4MB"
-      wal_level: "logical"
+      wal_level: "replica"
       log_connections: "off"
       log_disconnections: "off"
       log_duration: "off"
@@ -141,7 +150,7 @@ postgresql:
     switchoverDelay: 60
     failoverDelay: 0
     monitoring:
-      enabled: false
+      enablePodMonitor: true
 
   storage:
     # Persistent volume size for each PostgreSQL instance.
@@ -185,10 +194,48 @@ postgresql:
       # Daily at 02:00 UTC: 0 0 2 * * *
       # Every 6 hours:      0 0 */6 * * *
       # Weekly at Sun 03:00 UTC: 0 0 3 * * 0
-      cron: "0 * * * * *"
+      cron: "0 0 2 * * *"
       immediate: false
       suspend: false
       backupOwnerReference: self
+
+  # Optional PgBouncer layer in front of the primary/read-only service.
+  pooler:
+    enabled: true
+    # Keep a distinct name so the Pooler service cannot be confused with the
+    # cluster's built-in -rw service.
+    name: pooler-rw
+    type: rw
+    instances: 2
+    pgbouncer:
+      poolMode: transaction
+      parameters:
+        # Keep client sessions above expected app concurrency, but not so high
+        # that spikes hide real saturation. Tune with Spring Hikari settings.
+        max_client_conn: "200"
+        # Size backend pools conservatively relative to PostgreSQL max_connections.
+        default_pool_size: "20"
+    monitoring:
+      enablePodMonitor: true
+
+  alerts:
+    enabled: true
+    prometheusRuleLabels:
+      release: prometheus-stack-release
+    storage:
+      enabled: true
+      warningPercent: 80
+      criticalPercent: 90
+      for: 10m
+
+  # - name: downstream-subscription
+  #   database: appdb
+  #   subscriptionName: app_subscription
+  #   externalClusterName: upstream
+  #   publicationName: app_publication
+  #   publicationDBName: appdb
+  #   subscriptionReclaimPolicy: retain
+  #   parameters: {}
 
 # =============================================================================
 # MONGODB — Percona Operator for MongoDB

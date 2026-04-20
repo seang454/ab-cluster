@@ -1,0 +1,20 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: telegram-test-alert
+  namespace: seang
+  labels:
+    release: prometheus-stack-release
+spec:
+  groups:
+  - name: telegram.test.rules
+    rules:
+    - alert: TelegramTestAlert
+      expr: vector(1)
+      for: 1m
+      labels:
+        severity: warning
+        service: manual-test
+      annotations:
+        summary: "Telegram test alert"
+        description: "This is a temporary test alert to verify Alertmanager Telegram delivery."

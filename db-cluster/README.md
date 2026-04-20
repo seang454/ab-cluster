@@ -119,6 +119,11 @@ postgresql:
     schedule:
       enabled: true
       cron: "0 0 2 * * *"
+  pooler:
+    enabled: true
+  databases:
+    - name: reporting
+      owner: appuser
 ```
 
 If MinIO is exposed over HTTPS with a private CA, also set
@@ -135,5 +140,32 @@ CloudNativePG scheduled backups use a six-field cron format with seconds:
 - Daily at 02:00 UTC: `0 0 2 * * *`
 - Every 6 hours: `0 0 */6 * * *`
 - Weekly at 03:00 UTC on Sunday: `0 0 3 * * 0`
+
+## PostgreSQL Optional CRDs
+
+The PostgreSQL subchart can now render additional CloudNativePG resources when
+requested through values. All of them are opt-in, so an API-driven Helm
+upgrade can target only the PostgreSQL features present in the request body
+without changing other database subcharts.
+
+The chart defaults now enable:
+
+- `postgresql.pooler`
+- PostgreSQL `PodMonitor` integration for the cluster and pooler
+
+- `postgresql.pooler`: renders a `Pooler` CRD for PgBouncer.
+- `postgresql.cluster.monitoring.enablePodMonitor`: sets `spec.monitoring.enablePodMonitor: true` on the `Cluster`.
+- `postgresql.pooler.monitoring.enablePodMonitor`: sets `spec.monitoring.enablePodMonitor: true` on the `Pooler`.
+
+Example:
+
+```yaml
+postgresql:
+  enabled: true
+  pooler:
+    enabled: true
+    type: rw
+    instances: 2
+```
 
 can I deploy like this when I release the the whole chart for the subchart it should be apply specificly on the chart I run request to deploy should not effect to other chart if the reqest from API DO NOT REQEUST it but please keep still deploy the whole helm chart that store to database cluster but effect the subchart of each cluster on the request parth from api (request like push , get , patch , etc)
