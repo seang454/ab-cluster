@@ -1,0 +1,77 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "mysql.fullname" . }}-alerts
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: mysql
+    app.kubernetes.io/instance: {{ include "mysql.fullname" . }}
+    {{- with .Values.alerts.prometheusRuleLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+  - name: {{ include "mysql.fullname" . }}.health.rules
+    rules:
+    - alert: MySQLPodsNotReady
+      expr: |
+        sum(
+          kube_pod_status_ready{
+            namespace="{{ .Release.Namespace }}",
+            condition="true",
+            pod=~"{{ include "mysql.fullname" . }}-.*"
+          } == 0
+        ) > 0
+      for: 5m
+      labels:
+        severity: warning
+        service: mysql
+      annotations:
+        summary: "MySQL pods are not ready"
+        description: "One or more MySQL pods for {{ include "mysql.fullname" . }} are not ready in namespace {{ .Release.Namespace }}."
+    - alert: MySQLPodsRestarting
+      expr: |
+        increase(
+          kube_pod_container_status_restarts_total{
+            namespace="{{ .Release.Namespace }}",
+            pod=~"{{ include "mysql.fullname" . }}-.*"
+          }[15m]
+        ) > 0
+      for: 5m
+      labels:
+        severity: warning
+        service: mysql
+      annotations:
+        summary: "MySQL pods are restarting"
+        description: "One or more MySQL containers for {{ include "mysql.fullname" . }} restarted during the last 15 minutes."
+  - name: {{ include "mysql.fullname" . }}.storage.rules
+    rules:
+    - alert: MySQLPVCUsageHigh
+      expr: |
+        (
+          kubelet_volume_stats_used_bytes{namespace="{{ .Release.Namespace }}", persistentvolumeclaim=~"{{ include "mysql.fullname" . }}.*"}
+          /
+          kubelet_volume_stats_capacity_bytes{namespace="{{ .Release.Namespace }}", persistentvolumeclaim=~"{{ include "mysql.fullname" . }}.*"}
+        ) * 100 > {{ .Values.alerts.storage.warningPercent }}
+      for: {{ .Values.alerts.storage.for }}
+      labels:
+        severity: warning
+        service: mysql
+      annotations:
+        summary: "MySQL PVC usage is above {{ .Values.alerts.storage.warningPercent }}%"
+        description: "PVC {{ `{{ $labels.persistentvolumeclaim }}` }} in namespace {{ `{{ $labels.namespace }}` }} is {{ `{{ $value | printf \"%.1f\" }}` }}% full."
+    - alert: MySQLPVCUsageCritical
+      expr: |
+        (
+          kubelet_volume_stats_used_bytes{namespace="{{ .Release.Namespace }}", persistentvolumeclaim=~"{{ include "mysql.fullname" . }}.*"}
+          /
+          kubelet_volume_stats_capacity_bytes{namespace="{{ .Release.Namespace }}", persistentvolumeclaim=~"{{ include "mysql.fullname" . }}.*"}
+        ) * 100 > {{ .Values.alerts.storage.criticalPercent }}
+      for: {{ .Values.alerts.storage.for }}
+      labels:
+        severity: critical
+        service: mysql
+      annotations:
+        summary: "MySQL PVC usage is above {{ .Values.alerts.storage.criticalPercent }}%"
+        description: "PVC {{ `{{ $labels.persistentvolumeclaim }}` }} in namespace {{ `{{ $labels.namespace }}` }} is {{ `{{ $value | printf \"%.1f\" }}` }}% full. Immediate action is required."

@@ -10,7 +10,7 @@
 #
 # STEPS (in order): preflight, repos, longhorn, deps, install_operators,
 #                   vault_transit, vault_install, vault_init, vault_configure,
-#                   minio_deploy, operator_plugins, deploy
+#                   minio_deploy, deploy
 #
 # Create .env file with passwords before running:
 #   PG_PASS=secret  MONGO_PASS=secret  MYSQL_PASS=secret
@@ -23,6 +23,12 @@ NAMESPACE="databases"
 MINIO_NAMESPACE="storage"
 VAULT_NS="vault"
 TRANSIT_NS="vault-transit"
+EXTERNAL_SECRETS_NAMESPACE="${EXTERNAL_SECRETS_NAMESPACE:-external-secrets}"
+CNPG_NAMESPACE="${CNPG_NAMESPACE:-cnpg-system}"
+PSMDB_NAMESPACE="${PSMDB_NAMESPACE:-database-operators}"
+PXC_NAMESPACE="${PXC_NAMESPACE:-database-operators}"
+REDIS_NAMESPACE="${REDIS_NAMESPACE:-database-operators}"
+K8SSANDRA_NAMESPACE="${K8SSANDRA_NAMESPACE:-database-operators}"
 CHART_DIR="./db-cluster"
 MINIO_CHART_DIR="./minio"
 VAULT_CHART_DIR="./vault"
@@ -45,6 +51,46 @@ die()  { echo ""; echo "ERROR: $*"; exit 1; }
 
 KUBECTL_TIMEOUT="${KUBECTL_TIMEOUT:-15s}"
 
+helm_release_exists() {
+    local release="$1"
+    local namespace="$2"
+
+    helm status "$release" -n "$namespace" >/dev/null 2>&1
+}
+
+resolve_operator_namespace() {
+    local release="$1"
+    local target_namespace="$2"
+    local clusterrole_name="${3:-}"
+    local legacy_namespace="databases"
+    local owner_namespace
+
+    if helm_release_exists "$release" "$target_namespace"; then
+        printf '%s\n' "$target_namespace"
+        return 0
+    fi
+
+    if [ "$target_namespace" != "$legacy_namespace" ] && helm_release_exists "$release" "$legacy_namespace"; then
+        printf '%s\n' "$legacy_namespace"
+        return 0
+    fi
+
+    if [ -n "$clusterrole_name" ]; then
+        owner_namespace="$(
+            kubectl get clusterrole "$clusterrole_name" \
+                -o jsonpath='{.metadata.annotations.meta\.helm\.sh/release-namespace}' \
+                2>/dev/null || true
+        )"
+
+        if [ -n "$owner_namespace" ] && helm_release_exists "$release" "$owner_namespace"; then
+            printf '%s\n' "$owner_namespace"
+            return 0
+        fi
+    fi
+
+    printf '%s\n' "$target_namespace"
+}
+
 # Wait until a command succeeds, with retries
 retry() {
     local MAX="$1"; local WAIT="$2"; shift 2
@@ -60,6 +106,7 @@ wait_for_externalsecret_stable() {
     local namespace="$1"
     local name="$2"
     local deletion_timestamp
+    local finalizers_cleared=0
 
     for i in $(seq 1 36); do
         if ! kubectl get externalsecret "$name" -n "$namespace" >/dev/null 2>&1; then
@@ -69,6 +116,14 @@ wait_for_externalsecret_stable() {
         deletion_timestamp="$(kubectl get externalsecret "$name" -n "$namespace" -o jsonpath='{.metadata.deletionTimestamp}' 2>/dev/null || true)"
         if [ -z "$deletion_timestamp" ]; then
             return 0
+        fi
+
+        if [ "$i" -ge 6 ] && [ "$finalizers_cleared" -eq 0 ]; then
+            info "ExternalSecret $namespace/$name is stuck terminating; clearing finalizers..."
+            kubectl patch externalsecret "$name" -n "$namespace" \
+                --type=merge \
+                -p '{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
+            finalizers_cleared=1
         fi
 
         info "ExternalSecret $namespace/$name is terminating; waiting 5s for deletion to finish..."
@@ -755,11 +810,11 @@ prune_disabled_database_operators() {
         fi
     }
 
-    prune_operator postgresql cnpg cnpg-system
-    prune_operator mongodb psmdb-operator "$NAMESPACE"
-    prune_operator mysql pxc-operator "$NAMESPACE"
-    prune_operator redis redis-operator "$NAMESPACE"
-    prune_operator cassandra k8ssandra-operator "$NAMESPACE"
+    prune_operator postgresql cnpg "$CNPG_NAMESPACE"
+    prune_operator mongodb psmdb-operator "$PSMDB_NAMESPACE"
+    prune_operator mysql pxc-operator "$PXC_NAMESPACE"
+    prune_operator redis redis-operator "$REDIS_NAMESPACE"
+    prune_operator cassandra k8ssandra-operator "$K8SSANDRA_NAMESPACE"
 }
 
 cleanup_stale_mongodb_state() {
@@ -1544,7 +1599,7 @@ install_operators() {
 
     info "External Secrets Operator..."
     helm upgrade --install external-secrets ext-secrets/external-secrets \
-        --namespace external-secrets --create-namespace \
+        --namespace "$EXTERNAL_SECRETS_NAMESPACE" --create-namespace \
         --set installCRDs=true --wait --timeout 5m
 
     for crd in externalsecrets.external-secrets.io \
@@ -1555,19 +1610,83 @@ install_operators() {
     done
     ok "ESO ready"
 
-    info "CloudNativePG (PostgreSQL operator)..."
-    helm upgrade --install cnpg cnpg/cloudnative-pg \
-        --namespace cnpg-system --create-namespace \
-        --wait --timeout 5m
-    ok "CloudNativePG ready"
-
-    info "Percona MongoDB operator..."
-    helm upgrade --install psmdb-operator percona/psmdb-operator \
-        --namespace "$NAMESPACE" --create-namespace \
-        --wait --timeout 5m
-    ok "MongoDB operator ready"
+    info "Installing database operators..."
+    [ -x "$OPERATOR_INSTALLER" ] || die "Operator installer not found or not executable: $OPERATOR_INSTALLER"
+    NAMESPACE="$NAMESPACE" \
+    VALUES_FILE="${VALUES_FILE:-$CHART_DIR/values.yaml}" \
+    CNPG_NAMESPACE="$CNPG_NAMESPACE" \
+    PSMDB_NAMESPACE="$PSMDB_NAMESPACE" \
+    PXC_NAMESPACE="$PXC_NAMESPACE" \
+    REDIS_NAMESPACE="$REDIS_NAMESPACE" \
+    K8SSANDRA_NAMESPACE="$K8SSANDRA_NAMESPACE" \
+    CERT_MANAGER_NAMESPACE="$CERT_MANAGER_NAMESPACE" \
+    "$OPERATOR_INSTALLER" all \
+        || die "Operator installer script failed"
+    ok "Database operators ready"
 
     ok "All operators installed"
+}
+
+ensure_operator_releases() {
+    local failed=0
+    local release namespace label deployment
+    local redis_namespace k8ssandra_namespace
+
+    check_release() {
+        release="$1"
+        namespace="$2"
+        label="$3"
+        deployment="$4"
+        shift 4
+        if helm status "$release" -n "$namespace" >/dev/null 2>&1 \
+            && kubectl get deployment "$deployment" -n "$namespace" >/dev/null 2>&1; then
+            local crd missing_crd=0
+            for crd in "$@"; do
+                if ! kubectl get crd "$crd" >/dev/null 2>&1; then
+                    echo "    ✗ $label missing CRD $crd"
+                    missing_crd=1
+                    failed=1
+                fi
+            done
+            if [ "$missing_crd" -eq 0 ]; then
+                ok "$label present in namespace $namespace"
+            fi
+        else
+            echo "    ✗ $label missing in namespace $namespace"
+            failed=1
+        fi
+    }
+
+    echo "━━━ Operator Release Check ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    redis_namespace="$(resolve_operator_namespace redis-operator "$REDIS_NAMESPACE" redis-operator)"
+    k8ssandra_namespace="$(
+        resolve_operator_namespace \
+            k8ssandra-operator \
+            "$K8SSANDRA_NAMESPACE" \
+            k8ssandra-operator-cass-operator-cr
+    )"
+    check_release external-secrets "$EXTERNAL_SECRETS_NAMESPACE" "External Secrets Operator" external-secrets \
+        externalsecrets.external-secrets.io clustersecretstores.external-secrets.io
+    check_release cnpg "$CNPG_NAMESPACE" "CloudNativePG" cnpg-cloudnative-pg \
+        clusters.postgresql.cnpg.io poolers.postgresql.cnpg.io scheduledbackups.postgresql.cnpg.io
+    check_release psmdb-operator "$PSMDB_NAMESPACE" "Percona MongoDB Operator" psmdb-operator \
+        perconaservermongodbs.psmdb.percona.com
+    check_release pxc-operator "$PXC_NAMESPACE" "Percona MySQL Operator" pxc-operator \
+        perconaxtradbclusters.pxc.percona.com
+    check_release redis-operator "$redis_namespace" "Redis Operator" redis-operator \
+        redis.redis.redis.opstreelabs.in
+    check_release k8ssandra-operator "$k8ssandra_namespace" "K8ssandra Operator" k8ssandra-operator \
+        k8ssandraclusters.k8ssandra.io
+    echo ""
+
+    [ "$failed" -eq 0 ] || die "One or more operator releases are missing"
+}
+
+ensure_database_operator_prereqs() {
+    log "Ensuring database operator prerequisites..."
+    install_operators || die "Step install_operators failed"
+    ensure_operator_releases || die "Operator prerequisite check failed"
+    ok "Database operator prerequisites satisfied"
 }
 
 # =============================================================================
@@ -1575,6 +1694,8 @@ install_operators() {
 # =============================================================================
 deploy() {
     log "[8/8] Deploying db-cluster chart..."
+
+    ensure_database_operator_prereqs
 
     require_real_passwords
     : "${PG_PASS:?Add PG_PASS to .env}"
@@ -1607,12 +1728,12 @@ deploy() {
         --set "vaultTransit.enabled=false" \
         --set "vault.postgresql.superuserPassword=$PG_PASS" \
         --set "vault.postgresql.appPassword=$PG_PASS" \
-        --set "vault.mongodb.clusterAdminPassword=$MONGO_PASS" \
-        --set "vault.mongodb.userAdminPassword=$MONGO_PASS" \
-        --set "vault.mongodb.clusterMonitorPassword=$MONGO_PASS" \
-        --set "vault.mongodb.databaseAdminPassword=$MONGO_PASS" \
-        --set "vault.mongodb.backupPassword=$MONGO_PASS" \
-        --set "vault.mongodb.replicationKey=$MONGO_PASS" \
+        --set "mongodb.credentials.clusterAdminPassword=$MONGO_PASS" \
+        --set "mongodb.credentials.userAdminPassword=$MONGO_PASS" \
+        --set "mongodb.credentials.clusterMonitorPassword=$MONGO_PASS" \
+        --set "mongodb.credentials.databaseAdminPassword=$MONGO_PASS" \
+        --set "mongodb.credentials.backupPassword=$MONGO_PASS" \
+        --set "mongodb.credentials.replicationKey=$MONGO_PASS" \
         --set "vault.mysql.rootPassword=$MYSQL_PASS" \
         --set "vault.mysql.appPassword=$MYSQL_PASS" \
         --set "vault.mysql.replicationPassword=$MYSQL_PASS" \
@@ -1653,8 +1774,6 @@ deploy() {
                     || die "PostgreSQL did not become Ready"
                 ;;
             mongodb)
-                kubectl wait --for=condition=Ready externalsecret/"$RELEASE"-mongodb-credentials -n "$NAMESPACE" --timeout=180s >/dev/null 2>&1 \
-                    || die "MongoDB ExternalSecret did not become Ready"
                 retry 18 10 kubectl get secret "$RELEASE-mongodb-credentials" -n "$NAMESPACE" >/dev/null \
                     || die "MongoDB credentials secret was not created"
                 wait_for_pods_ready "$NAMESPACE" "app.kubernetes.io/instance=${RELEASE}-mongodb,app.kubernetes.io/component=mongod" 60 10 "MongoDB pods" \
@@ -1776,13 +1895,12 @@ setup() {
     ingress_nginx   || die "Step ingress_nginx failed"
     longhorn        || die "Step longhorn failed"
     deps            || die "Step deps failed"
-    install_operators || die "Step install_operators failed"
+    ensure_database_operator_prereqs
     vault_transit   || die "Step vault_transit failed"
     vault_install   || die "Step vault_install failed"
     vault_init      || die "Step vault_init failed"
     vault_configure || die "Step vault_configure failed"
     minio_deploy    || die "Step minio_deploy failed"
-    operator_plugins || die "Step operator_plugins failed"
     deploy          || die "Step deploy failed"
 
     echo ""
@@ -1829,6 +1947,20 @@ clusters() {
         kubectl get "$KIND" -n "$NAMESPACE" 2>/dev/null || echo "  not enabled"
         echo ""
     done
+}
+
+operators_status() {
+    echo "━━━ Operator Deployments ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    kubectl get deploy -A 2>/dev/null | grep -E 'external-secrets|cnpg|psmdb|pxc|redis-operator|k8ssandra' \
+        || echo "  none found"
+    echo ""
+    echo "━━━ Operator Pods ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    kubectl get pods -A 2>/dev/null | grep -E 'external-secrets|cnpg|psmdb|pxc|redis-operator|k8ssandra' \
+        || echo "  none found"
+    echo ""
+    echo "━━━ Operator CRDs ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    kubectl get crd 2>/dev/null | grep -E 'external-secrets|cnpg|psmdb|pxc|redis\.opstreelabs|k8ssandra' \
+        || echo "  none found"
 }
 
 vault_status() {
@@ -1919,12 +2051,12 @@ upgrade() {
         --set "vaultTransit.enabled=false" \
         --set "vault.postgresql.superuserPassword=$PG_PASS" \
         --set "vault.postgresql.appPassword=$PG_PASS" \
-        --set "vault.mongodb.clusterAdminPassword=$MONGO_PASS" \
-        --set "vault.mongodb.userAdminPassword=$MONGO_PASS" \
-        --set "vault.mongodb.clusterMonitorPassword=$MONGO_PASS" \
-        --set "vault.mongodb.databaseAdminPassword=$MONGO_PASS" \
-        --set "vault.mongodb.backupPassword=$MONGO_PASS" \
-        --set "vault.mongodb.replicationKey=$MONGO_PASS" \
+        --set "mongodb.credentials.clusterAdminPassword=$MONGO_PASS" \
+        --set "mongodb.credentials.userAdminPassword=$MONGO_PASS" \
+        --set "mongodb.credentials.clusterMonitorPassword=$MONGO_PASS" \
+        --set "mongodb.credentials.databaseAdminPassword=$MONGO_PASS" \
+        --set "mongodb.credentials.backupPassword=$MONGO_PASS" \
+        --set "mongodb.credentials.replicationKey=$MONGO_PASS" \
         --set "vault.mysql.rootPassword=$MYSQL_PASS" \
         --set "vault.mysql.appPassword=$MYSQL_PASS" \
         --set "vault.mysql.replicationPassword=$MYSQL_PASS" \
@@ -1998,12 +2130,12 @@ teardown() {
     helm uninstall "$MINIO_RELEASE" -n "$MINIO_NAMESPACE" 2>/dev/null || true
     helm uninstall vault            -n "$VAULT_NS"       2>/dev/null || true
     helm uninstall vault-transit    -n "$TRANSIT_NS"     2>/dev/null || true
-    helm uninstall external-secrets -n external-secrets 2>/dev/null || true
-    helm uninstall cnpg             -n cnpg-system      2>/dev/null || true
-    helm uninstall psmdb-operator   -n "$NAMESPACE"     2>/dev/null || true
-    helm uninstall pxc-operator     -n "$NAMESPACE"     2>/dev/null || true
-    helm uninstall redis-operator   -n "$NAMESPACE"     2>/dev/null || true
-    helm uninstall k8ssandra-operator -n "$NAMESPACE"   2>/dev/null || true
+    helm uninstall external-secrets -n "$EXTERNAL_SECRETS_NAMESPACE" 2>/dev/null || true
+    helm uninstall cnpg             -n "$CNPG_NAMESPACE" 2>/dev/null || true
+    helm uninstall psmdb-operator   -n "$PSMDB_NAMESPACE" 2>/dev/null || true
+    helm uninstall pxc-operator     -n "$PXC_NAMESPACE" 2>/dev/null || true
+    helm uninstall redis-operator   -n "$REDIS_NAMESPACE" 2>/dev/null || true
+    helm uninstall k8ssandra-operator -n "$K8SSANDRA_NAMESPACE" 2>/dev/null || true
     helm uninstall traefik          -n traefik          2>/dev/null || true
     helm uninstall longhorn         -n longhorn-system  2>/dev/null || true
     ok "Helm releases uninstalled"
@@ -2029,7 +2161,7 @@ teardown() {
 
     # ── 7. Delete all namespaces ──────────────────────────────────────────
     log "[7/8] Deleting namespaces..."
-    for ns in "$NAMESPACE" "$MINIO_NAMESPACE" "$VAULT_NS" "$TRANSIT_NS" external-secrets cnpg-system longhorn-system traefik; do
+    for ns in "$NAMESPACE" "$MINIO_NAMESPACE" "$VAULT_NS" "$TRANSIT_NS" "$EXTERNAL_SECRETS_NAMESPACE" "$CNPG_NAMESPACE" "$PSMDB_NAMESPACE" "$PXC_NAMESPACE" "$REDIS_NAMESPACE" "$K8SSANDRA_NAMESPACE" longhorn-system traefik; do
         # Final PVC sweep
         for pvc in $(kubectl get pvc -n "$ns" -o name --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null); do
             kubectl patch "$pvc" -n "$ns"                 -p '{"metadata":{"finalizers":[]}}' --type=merge --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null || true
@@ -2084,14 +2216,14 @@ teardownremain() {
     sleep 5
 
     log "[1/4] Removing leftover operator Helm releases and namespaces..."
-    helm uninstall external-secrets -n external-secrets 2>/dev/null || true
-    helm uninstall cnpg -n cnpg-system 2>/dev/null || true
+    helm uninstall external-secrets -n "$EXTERNAL_SECRETS_NAMESPACE" 2>/dev/null || true
+    helm uninstall cnpg -n "$CNPG_NAMESPACE" 2>/dev/null || true
     helm uninstall "$MINIO_RELEASE" -n "$MINIO_NAMESPACE" 2>/dev/null || true
-    helm uninstall psmdb-operator -n "$NAMESPACE" 2>/dev/null || true
-    helm uninstall pxc-operator -n "$NAMESPACE" 2>/dev/null || true
-    helm uninstall redis-operator -n "$NAMESPACE" 2>/dev/null || true
-    helm uninstall k8ssandra-operator -n "$NAMESPACE" 2>/dev/null || true
-    for ns in "$MINIO_NAMESPACE" external-secrets cnpg-system; do
+    helm uninstall psmdb-operator -n "$PSMDB_NAMESPACE" 2>/dev/null || true
+    helm uninstall pxc-operator -n "$PXC_NAMESPACE" 2>/dev/null || true
+    helm uninstall redis-operator -n "$REDIS_NAMESPACE" 2>/dev/null || true
+    helm uninstall k8ssandra-operator -n "$K8SSANDRA_NAMESPACE" 2>/dev/null || true
+    for ns in "$MINIO_NAMESPACE" "$EXTERNAL_SECRETS_NAMESPACE" "$CNPG_NAMESPACE" "$PSMDB_NAMESPACE" "$PXC_NAMESPACE" "$REDIS_NAMESPACE" "$K8SSANDRA_NAMESPACE"; do
         kubectl delete namespace "$ns" --force --grace-period=0 --wait=false --ignore-not-found --request-timeout="$KUBECTL_TIMEOUT" 2>/dev/null || true
     done
     ok "Operator cleanup attempted"
@@ -2203,52 +2335,56 @@ usage() {
     echo "    Why install it: useful when operators need repair or reinstall"
     echo "    without rerunning the entire stack."
     echo ""
-    echo "15. status"
+    echo "15. operators_status"
+    echo "    Show operator deployments, pods, and CRDs."
+    echo "    Why use it: confirm every prerequisite controller is installed."
+    echo ""
+    echo "16. status"
     echo "    Show pods and PVCs across the main namespaces."
     echo "    Why use it: quick health check after install or during debugging."
     echo ""
-    echo "16. clusters"
+    echo "17. clusters"
     echo "    Show database custom resources."
     echo "    Why use it: operators report database state through CRs, not only pods."
     echo ""
-    echo "17. vault_status"
+    echo "18. vault_status"
     echo "    Check seal and health status of Vault."
     echo "    Why use it: if Vault is sealed or unhealthy, secret sync and auth"
     echo "    problems will appear across the platform."
     echo ""
-    echo "18. upgrade"
+    echo "19. upgrade"
     echo "    Reapply the Helm release after values or password changes."
     echo "    Why use it: update the running release without tearing it down."
     echo ""
-    echo "19. sync"
+    echo "20. sync"
     echo "    Force External Secrets sync from Vault."
     echo "    Why use it: push updated Vault values back into Kubernetes secrets."
     echo ""
-    echo "20. vault_list"
+    echo "21. vault_list"
     echo "    List database secret paths in Vault."
     echo "    Why use it: confirm secret paths were created as expected."
     echo ""
-    echo "21. vault_get <db>"
+    echo "22. vault_get <db>"
     echo "    Read one database secret from Vault."
     echo "    Why use it: debug credential mismatches for a specific database."
     echo ""
-    echo "22. rotate <db> <pass>"
+    echo "23. rotate <db> <pass>"
     echo "    Rotate one database password in Vault."
     echo "    Why use it: Vault is the source of truth, so rotation should start there."
     echo ""
-    echo "23. pg | mongo | redis | mysql | cassandra"
+    echo "24. pg | mongo | redis | mysql | cassandra"
     echo "    Port-forward one database locally."
     echo "    Why use it: local access for admin work without exposing databases publicly."
     echo ""
-    echo "24. vault_ui | longhorn_ui"
+    echo "25. vault_ui | longhorn_ui"
     echo "    Port-forward Vault UI or Longhorn UI locally."
     echo "    Why use it: inspect secret state or storage state safely from your machine."
     echo ""
-    echo "25. teardown"
+    echo "26. teardown"
     echo "    Delete the entire platform. Destructive."
     echo "    Why use it: reset the cluster when you want a clean reinstall."
     echo ""
-    echo "26. teardownremain"
+    echo "27. teardownremain"
     echo "    Delete remaining cluster-scoped leftovers and generated local setup files. Destructive."
     echo "    Why use it: use after teardown when you want a deeper reset before a"
     echo "    fresh reinstall."
@@ -2263,7 +2399,7 @@ usage() {
 
 CMD="${1:-setup}"; shift 2>/dev/null || true
 case "$CMD" in
-    setup|small_setup|teardown|teardownremain|status|clusters|vault_status|upgrade|sync|usage|\
+    setup|small_setup|teardown|teardownremain|operators_status|status|clusters|vault_status|upgrade|sync|usage|\
     preflight|repos|ingress_nginx|longhorn|deps|vault_transit|vault_install|vault_init|\
     install_operators|minio_deploy|deploy|operator_plugins|vault_list|vault_get|rotate|\
     pg|mongo|redis|mysql|cassandra|vault_ui|longhorn_ui)

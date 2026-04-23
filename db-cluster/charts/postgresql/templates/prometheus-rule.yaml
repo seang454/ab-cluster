@@ -12,6 +12,39 @@ metadata:
     {{- end }}
 spec:
   groups:
+  - name: {{ include "postgresql.fullname" . }}.health.rules
+    rules:
+    - alert: CloudNativePGPodsNotReady
+      expr: |
+        sum(
+          kube_pod_status_ready{
+            namespace="{{ .Release.Namespace }}",
+            condition="true",
+            pod=~"{{ include "postgresql.fullname" . }}-.*"
+          } == 0
+        ) > 0
+      for: 5m
+      labels:
+        severity: warning
+        service: cloudnativepg
+      annotations:
+        summary: "CloudNativePG pods are not ready"
+        description: "One or more CloudNativePG pods for {{ include "postgresql.fullname" . }} are not ready in namespace {{ .Release.Namespace }}."
+    - alert: CloudNativePGPodsRestarting
+      expr: |
+        increase(
+          kube_pod_container_status_restarts_total{
+            namespace="{{ .Release.Namespace }}",
+            pod=~"{{ include "postgresql.fullname" . }}-.*"
+          }[15m]
+        ) > 0
+      for: 5m
+      labels:
+        severity: warning
+        service: cloudnativepg
+      annotations:
+        summary: "CloudNativePG pods are restarting"
+        description: "One or more CloudNativePG containers for {{ include "postgresql.fullname" . }} restarted during the last 15 minutes."
   - name: {{ include "postgresql.fullname" . }}.storage.rules
     rules:
     - alert: CloudNativePGPVCUsageHigh

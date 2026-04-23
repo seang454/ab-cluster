@@ -15,6 +15,120 @@ Kubernetes resources. Cluster-wide bootstrap services are installed separately.
 - Database Services, Ingresses, and CRs
 - Optional HAProxy-based TCP proxy
 
+## Shared Platform Flow
+
+This chart uses one common platform model across all database types:
+
+```text
+Vault -> ExternalSecret -> Kubernetes Secret -> Database Operator
+MinIO/S3 -> Operator-specific backup integration
+Prometheus -> Operator/exporter-specific metrics integration
+Public DNS -> external HAProxy -> database service
+```
+
+The high-level flow is shared, but each subchart keeps its own operator logic.
+This chart does not try to force PostgreSQL CRDs or PgBouncer semantics onto
+MongoDB, MySQL, Redis, or Cassandra.
+
+## Feature Mapping By Database
+
+Use the same platform concepts, but let each database implement them with its
+own operator-native resources:
+
+| Database | Cluster CR | Scheduled backup | Connection proxy / routing | Metrics path | External access |
+| --- | --- | --- | --- | --- | --- |
+| PostgreSQL | `Cluster` (CloudNativePG) | `ScheduledBackup` | `Pooler` (PgBouncer) + HAProxy | CNPG PodMonitor / PrometheusRule | HAProxy -> `*-postgresql-rw` |
+| MongoDB | `PerconaServerMongoDB` | `spec.backup.tasks[]` | operator replica-set service / split horizons | exporter sidecar + PodMonitor + PrometheusRule | HAProxy or split horizons |
+| MySQL | `PerconaXtraDBCluster` | `spec.backup.schedule[]` | operator HAProxy | exporter sidecar + PodMonitor + PrometheusRule | operator HAProxy + external TCP proxy |
+| Redis | `RedisCluster` | CronJob snapshot backup in this chart | direct Redis service | Redis exporter + ServiceMonitor + PrometheusRule | external TCP proxy |
+| Cassandra | `K8ssandraCluster` | `MedusaBackupSchedule` | direct Cassandra service | K8ssandra / Medusa metrics | external TCP proxy |
+
+## Connection Handling By Database
+
+This chart now treats "pooler" as a database-specific connection-handling
+feature, not a single shared CRD:
+
+- PostgreSQL: CloudNativePG `Pooler` with PgBouncer
+- MySQL: operator-managed HAProxy
+- MongoDB: replica set service and client-driver pooling, with split horizons
+  when exposing member endpoints externally
+- Redis: client-driver pooling, optional external TCP proxy
+- Cassandra: driver-native session pooling, optional external TCP proxy
+
+Use the operator-native or driver-native option for each database instead of
+trying to force a PostgreSQL-style pooler onto all engines.
+
+The `values.yaml` now exposes this explicitly with a per-database
+`connectionHandling` block:
+
+```yaml
+postgresql:
+  connectionHandling:
+    enabled: true
+    mode: pooler
+
+mysql:
+  connectionHandling:
+    enabled: true
+    mode: haproxy
+
+mongodb:
+  connectionHandling:
+    enabled: true
+    mode: driver
+
+redis:
+  connectionHandling:
+    enabled: true
+    mode: client
+
+cassandra:
+  connectionHandling:
+    enabled: true
+    mode: driver
+```
+
+Only PostgreSQL and MySQL render extra connection-handling resources from this
+block today, because MongoDB, Redis, and Cassandra rely on their operator or
+client-driver pooling model instead of a standalone pooler object.
+
+## Monitoring By Database
+
+Monitoring is enabled in each chart using the mechanism that fits that operator:
+
+- PostgreSQL: CloudNativePG native `monitoring.enablePodMonitor`
+- MongoDB: exporter sidecar plus chart-managed `PodMonitor`
+- MySQL: exporter sidecar plus chart-managed `PodMonitor`
+- Redis: OpsTree native `redisExporter` plus `serviceMonitor`
+- Cassandra: K8ssandra `telemetry.prometheus.enabled`, which allows the operator
+  to create `ServiceMonitor` resources
+
+This keeps monitoring "in its own way" per engine instead of forcing a fake
+generic PodMonitor across everything.
+
+## Common Values Contract
+
+At the umbrella-chart level, keep the same platform blocks for each database
+where they make sense:
+
+- `externalAccess`
+- `backup`
+- `monitoring`
+- `alerts`
+- `tls`
+- `resources`
+- `storage`
+
+Each subchart maps those blocks to its own operator-specific resources.
+Examples:
+
+- PostgreSQL uses `backup.schedule.cron` to render `ScheduledBackup`
+- MongoDB uses `backup.task.schedule` inside `PerconaServerMongoDB`
+- MySQL uses `backup.schedule.cron` inside `PerconaXtraDBCluster`
+- Cassandra uses `backup.schedule.cron` to render `MedusaBackupSchedule`
+- Redis currently uses its own cluster/exporter logic and does not yet render a
+  scheduled backup resource
+
 ## What this chart does not include
 
 - Vault
@@ -79,6 +193,17 @@ cassandra:
     password: "YourSecurePassword!"
 ```
 
+For production, prefer this pattern instead of storing real passwords in
+`values.yaml`:
+
+```text
+Vault -> ExternalSecret -> Kubernetes Secret -> database operator secretRef
+```
+
+The PostgreSQL chart already references named Secrets through
+`superuserSecret` and bootstrap `secret.name`. The same pattern should be used
+for the other database operators so credentials stay outside the Helm values.
+
 ## Notes
 
 - This chart assumes your storage class already exists.
@@ -91,6 +216,12 @@ cassandra:
   `s3://<namespace>/<releaseName>/<clusterName>`. PostgreSQL uses a full
   `destinationPath`, while MongoDB, MySQL, and Cassandra use the namespace as
   the bucket and `<releaseName>/<clusterName>` as the prefix.
+- When you deploy the whole umbrella chart from an API, only pass overrides for
+  the database blocks included in the request. Each subchart keeps its own
+  logic and should only change if that block is enabled or explicitly
+  overridden.
+- Do not force PostgreSQL-only resources such as `Pooler` onto other database
+  types. Use the equivalent operator-native feature instead.
 
 ## PostgreSQL Backups To MinIO
 
@@ -151,11 +282,18 @@ without changing other database subcharts.
 The chart defaults now enable:
 
 - `postgresql.pooler`
-- PostgreSQL `PodMonitor` integration for the cluster and pooler
+- PostgreSQL `PrometheusRule` alerts
+
+The chart defaults now keep CNPG-managed `PodMonitor` generation disabled for
+the cluster and pooler. In some environments the operator can fail cluster
+bootstrap while creating those auxiliary monitoring objects. If you want
+Prometheus scraping, prefer the chart's standalone `PodMonitor` resources.
 
 - `postgresql.pooler`: renders a `Pooler` CRD for PgBouncer.
-- `postgresql.cluster.monitoring.enablePodMonitor`: sets `spec.monitoring.enablePodMonitor: true` on the `Cluster`.
-- `postgresql.pooler.monitoring.enablePodMonitor`: sets `spec.monitoring.enablePodMonitor: true` on the `Pooler`.
+- `postgresql.cluster.monitoring.enablePodMonitor`: when set `true`, asks CNPG to generate a `PodMonitor` for the `Cluster`.
+- `postgresql.pooler.monitoring.enablePodMonitor`: when set `true`, asks CNPG to generate a `PodMonitor` for the `Pooler`.
+- `postgresql.cluster.monitoring.standalonePodMonitor`: renders a chart-managed `PodMonitor` that scrapes CNPG instance pods on the `metrics` port.
+- `postgresql.pooler.monitoring.standalonePodMonitor`: renders a chart-managed `PodMonitor` that scrapes PgBouncer pooler pods on the `metrics` port.
 
 Example:
 

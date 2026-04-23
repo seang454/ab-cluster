@@ -29,6 +29,8 @@ spec:
   replsets:
   - name: rs0
     size: {{ $instances }}
+    labels:
+      monitoring.seang.shop/mongodb-exporter: "true"
     {{- with .Values.cluster.env }}
     env:
       {{- toYaml . | nindent 4 }}
@@ -37,9 +39,32 @@ spec:
     configuration: |
       {{- . | nindent 6 }}
     {{- end }}
-    {{- with .Values.cluster.sidecars }}
+    {{- if or .Values.cluster.sidecars true }}
     sidecars:
+      {{- with .Values.cluster.sidecars }}
       {{- toYaml . | nindent 4 }}
+      {{- end }}
+    - name: mongodb-exporter
+      image: {{ (.Values.monitoring.exporter.image | default "percona/mongodb_exporter:0.40") | quote }}
+      imagePullPolicy: IfNotPresent
+      args:
+        - --web.listen-address=:9216
+        - --compatible-mode
+        - --mongodb.uri=mongodb://$(MONGODB_CLUSTER_MONITOR_USER):$(MONGODB_CLUSTER_MONITOR_PASSWORD)@127.0.0.1:27017/admin
+      ports:
+        - containerPort: 9216
+          name: mongodb-metrics
+      env:
+        - name: MONGODB_CLUSTER_MONITOR_USER
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "mongodb.secretName" . }}
+              key: MONGODB_CLUSTER_MONITOR_USER
+        - name: MONGODB_CLUSTER_MONITOR_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "mongodb.secretName" . }}
+              key: MONGODB_CLUSTER_MONITOR_PASSWORD
     {{- end }}
     {{- if $horizonsEnabled }}
     expose:

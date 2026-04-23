@@ -1,0 +1,72 @@
+{{- if and .Values.backup.enabled .Values.backup.schedule.enabled }}
+{{- $tls := .Values.tls | default dict -}}
+{{- $redisHost := printf "%s-leader.%s.svc" (include "redis.fullname" .) .Release.Namespace -}}
+{{- $bucket := tpl (.Values.backup.s3.bucket | default .Release.Namespace) . -}}
+{{- $prefix := tpl (.Values.backup.s3.prefix | default (printf "%s/%s" .Release.Name (include "redis.fullname" .))) . -}}
+{{- $credentialSecret := tpl (.Values.backup.s3.credentialSecret | default (printf "minio-credentials-%s" .Release.Name)) . -}}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "redis.fullname" . }}-backup
+  namespace: {{ .Release.Namespace }}
+spec:
+  schedule: {{ .Values.backup.schedule.cron | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: redis-backup
+            image: {{ .Values.backup.image | default "alpine:3.20" | quote }}
+            imagePullPolicy: {{ .Values.backup.imagePullPolicy | default "IfNotPresent" }}
+            env:
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $credentialSecret }}
+                  key: {{ .Values.backup.s3.accessKeyKey | default "root-user" | quote }}
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $credentialSecret }}
+                  key: {{ .Values.backup.s3.secretKeyKey | default "root-password" | quote }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "redis.secretName" . }}
+                  key: password
+            command:
+            - /bin/sh
+            - -ec
+            - |
+              apk add --no-cache redis aws-cli >/dev/null
+              ts="$(date -u +%Y%m%dT%H%M%SZ)"
+              dump="/tmp/{{ include "redis.fullname" . }}-${ts}.rdb"
+
+              set -- -h {{ $redisHost | quote }} -p 6379 --rdb "$dump"
+              if [ -n "${REDIS_PASSWORD:-}" ]; then
+                set -- "$@" -a "$REDIS_PASSWORD"
+              fi
+              {{- if $tls.enabled }}
+              set -- "$@" --tls --cacert /tls/{{ $tls.caKey | default "ca.crt" }} --cert /tls/{{ $tls.certKey | default "tls.crt" }} --key /tls/{{ $tls.privateKeyKey | default "tls.key" }}
+              {{- end }}
+
+              redis-cli "$@"
+              aws --endpoint-url {{ .Values.backup.s3.endpointURL | quote }} s3 cp "$dump" "s3://{{ $bucket }}/{{ $prefix }}/${ts}.rdb"
+            {{- if $tls.enabled }}
+            volumeMounts:
+            - name: redis-tls
+              mountPath: /tls
+              readOnly: true
+            {{- end }}
+          {{- if $tls.enabled }}
+          volumes:
+          - name: redis-tls
+            secret:
+              secretName: {{ include "redis.tlsSecretName" . }}
+          {{- end }}
+{{- end }}

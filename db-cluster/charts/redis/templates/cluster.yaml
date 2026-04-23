@@ -6,6 +6,8 @@ metadata:
 {{- $tls := .Values.tls | default dict }}
 {{- $auth := .Values.auth | default dict }}
 {{- $redisPassword := get $auth "password" | default "" }}
+{{- $monitoring := .Values.monitoring | default dict }}
+{{- $serviceMonitor := get $monitoring "serviceMonitor" | default dict }}
 spec:
   clusterSize: {{ .Values.cluster.instances }}
   clusterVersion: v7
@@ -124,4 +126,12 @@ spec:
   redisExporter:
     enabled: true
     image: {{ .Values.exporter.image }}
+  {{- end }}
+
+  {{- if .Values.exporter.enabled }}
+  serviceMonitor:
+    enabled: true
+    interval: {{ (get $serviceMonitor "interval" | default "30s") | quote }}
+    scrapeTimeout: {{ (get $serviceMonitor "scrapeTimeout" | default "10s") | quote }}
+    namespace: {{ (get $serviceMonitor "namespace" | default "") | quote }}
   {{- end }}

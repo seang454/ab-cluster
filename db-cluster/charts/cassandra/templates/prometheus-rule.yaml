@@ -1,0 +1,79 @@
+{{- if and .Values.alerts.enabled .Values.alerts.storage.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "cassandra.fullname" . }}-alerts
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: cassandra
+    app.kubernetes.io/instance: {{ include "cassandra.fullname" . }}
+    {{- with .Values.alerts.prometheusRuleLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+  - name: {{ include "cassandra.fullname" . }}.health.rules
+    rules:
+    - alert: CassandraPodsNotReady
+      expr: |
+        sum(
+          kube_pod_status_ready{
+            namespace="{{ .Release.Namespace }}",
+            condition="true",
+            pod=~"{{ include "cassandra.fullname" . }}-.*"
+          } == 0
+        ) > 0
+      for: 5m
+      labels:
+        severity: warning
+        service: cassandra
+      annotations:
+        summary: "Cassandra pods are not ready"
+        description: "One or more Cassandra pods for {{ include "cassandra.fullname" . }} are not ready in namespace {{ .Release.Namespace }}."
+    - alert: CassandraPodsRestarting
+      expr: |
+        increase(
+          kube_pod_container_status_restarts_total{
+            namespace="{{ .Release.Namespace }}",
+            pod=~"{{ include "cassandra.fullname" . }}-.*"
+          }[15m]
+        ) > 0
+      for: 5m
+      labels:
+        severity: warning
+        service: cassandra
+      annotations:
+        summary: "Cassandra pods are restarting"
+        description: "One or more Cassandra containers for {{ include "cassandra.fullname" . }} restarted during the last 15 minutes."
+  - name: {{ include "cassandra.fullname" . }}.storage.rules
+    rules:
+    - alert: CassandraPVCUsageHigh
+      expr: |
+        (
+          kubelet_volume_stats_used_bytes{namespace="{{ .Release.Namespace }}", persistentvolumeclaim=~"{{ include "cassandra.fullname" . }}.*"}
+          /
+          kubelet_volume_stats_capacity_bytes{namespace="{{ .Release.Namespace }}", persistentvolumeclaim=~"{{ include "cassandra.fullname" . }}.*"}
+        ) * 100 > {{ .Values.alerts.storage.warningPercent }}
+      for: {{ .Values.alerts.storage.for }}
+      labels:
+        severity: warning
+        service: cassandra
+      annotations:
+        summary: "Cassandra PVC usage is above {{ .Values.alerts.storage.warningPercent }}%"
+        description: "PVC {{ `{{ $labels.persistentvolumeclaim }}` }} in namespace {{ `{{ $labels.namespace }}` }} is {{ `{{ $value | printf \"%.1f\" }}` }}% full."
+    - alert: CassandraPVCUsageCritical
+      expr: |
+        (
+          kubelet_volume_stats_used_bytes{namespace="{{ .Release.Namespace }}", persistentvolumeclaim=~"{{ include "cassandra.fullname" . }}.*"}
+          /
+          kubelet_volume_stats_capacity_bytes{namespace="{{ .Release.Namespace }}", persistentvolumeclaim=~"{{ include "cassandra.fullname" . }}.*"}
+        ) * 100 > {{ .Values.alerts.storage.criticalPercent }}
+      for: {{ .Values.alerts.storage.for }}
+      labels:
+        severity: critical
+        service: cassandra
+      annotations:
+        summary: "Cassandra PVC usage is above {{ .Values.alerts.storage.criticalPercent }}%"
+        description: "PVC {{ `{{ $labels.persistentvolumeclaim }}` }} in namespace {{ `{{ $labels.namespace }}` }} is {{ `{{ $value | printf \"%.1f\" }}` }}% full. Immediate action is required."
+{{- end }}

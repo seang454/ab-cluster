@@ -4,6 +4,7 @@ metadata:
   name: {{ include "mysql.fullname" . }}
   namespace: {{ .Release.Namespace }}
 {{- $ext := .Values.externalAccess | default dict }}
+{{- $conn := .Values.connectionHandling | default dict }}
 spec:
   crVersion: 1.14.0
 
@@ -16,6 +17,23 @@ spec:
   pxc:
     size: {{ .Values.cluster.instances }}
     image: {{ .Values.cluster.image }}
+    sidecars:
+      - name: mysqld-exporter
+        image: {{ (.Values.monitoring.exporter.image | default "prom/mysqld-exporter:v0.19.0") | quote }}
+        imagePullPolicy: IfNotPresent
+        args:
+          - --web.listen-address=:9104
+          - --mysqld.address=127.0.0.1:3306
+          - --mysqld.username=monitor
+        ports:
+          - containerPort: 9104
+            name: mysql-metrics
+        env:
+          - name: MYSQLD_EXPORTER_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: {{ include "mysql.secretName" . }}
+                key: monitor
     {{- with .Values.cluster.probes }}
     readinessDelaySec: {{ .readinessDelaySeconds | default 60 }}
     readinessProbes:
@@ -47,7 +65,7 @@ spec:
             storage: {{ .Values.storage.size }}
 
   haproxy:
-    enabled: true
+    enabled: {{ and (.Values.haproxy.enabled | default true) (ne (get $conn "enabled") false) (eq (get $conn "mode" | default "haproxy") "haproxy") }}
     {{- if $ext.enabled }}
     exposePrimary:
       enabled: true

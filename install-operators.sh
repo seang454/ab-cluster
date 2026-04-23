@@ -5,14 +5,14 @@ set -euo pipefail
 NAMESPACE="${NAMESPACE:-databases}"
 VALUES_FILE="${VALUES_FILE:-./db-cluster/values.yaml}"
 CNPG_NAMESPACE="${CNPG_NAMESPACE:-cnpg-system}"
-REDIS_NAMESPACE="${REDIS_NAMESPACE:-$NAMESPACE}"
-PXC_NAMESPACE="${PXC_NAMESPACE:-$NAMESPACE}"
-PSMDB_NAMESPACE="${PSMDB_NAMESPACE:-$NAMESPACE}"
-K8SSANDRA_NAMESPACE="${K8SSANDRA_NAMESPACE:-$NAMESPACE}"
+REDIS_NAMESPACE="${REDIS_NAMESPACE:-database-operators}"
+PXC_NAMESPACE="${PXC_NAMESPACE:-database-operators}"
+PSMDB_NAMESPACE="${PSMDB_NAMESPACE:-database-operators}"
+K8SSANDRA_NAMESPACE="${K8SSANDRA_NAMESPACE:-database-operators}"
 CERT_MANAGER_NAMESPACE="${CERT_MANAGER_NAMESPACE:-cert-manager}"
 
 CNPG_VERSION="${CNPG_VERSION:-0.21.0}"
-PSMDB_VERSION="${PSMDB_VERSION:-1.15.0}"
+PSMDB_VERSION="${PSMDB_VERSION:-1.22.0}"
 PXC_VERSION="${PXC_VERSION:-1.14.0}"
 REDIS_OPERATOR_VERSION="${REDIS_OPERATOR_VERSION:-0.24.0}"
 K8SSANDRA_VERSION="${K8SSANDRA_VERSION:-1.14.0}"
@@ -173,6 +173,148 @@ skip_if_deployed() {
   return 1
 }
 
+deployment_ready() {
+  local namespace="$1"
+  local deployment="$2"
+  local ready replicas
+
+  ready="$(
+    kubectl get deployment "$deployment" -n "$namespace" \
+      -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true
+  )"
+  replicas="$(
+    kubectl get deployment "$deployment" -n "$namespace" \
+      -o jsonpath='{.status.replicas}' 2>/dev/null || true
+  )"
+
+  [ -n "$ready" ] && [ "$ready" != "0" ] && [ "$ready" = "${replicas:-}" ]
+}
+
+crd_present() {
+  local crd="$1"
+  kubectl get crd "$crd" >/dev/null 2>&1
+}
+
+operator_release_healthy() {
+  local release="$1"
+  local namespace="$2"
+  local label="$3"
+  local deployment="$4"
+  shift 4
+  local crd
+
+  if ! skip_if_deployed "$release" "$namespace" "$label" >/dev/null; then
+    return 1
+  fi
+
+  if ! deployment_ready "$namespace" "$deployment"; then
+    return 1
+  fi
+
+  for crd in "$@"; do
+    [ -n "$crd" ] || continue
+    if ! crd_present "$crd"; then
+      return 1
+    fi
+  done
+
+  ok "$label already installed and healthy in namespace $namespace; skipping"
+  return 0
+}
+
+remove_release_if_exists() {
+  local release="$1"
+  local namespace="$2"
+
+  if helm_release_exists "$release" "$namespace"; then
+    log "Removing stale Helm release $release from namespace $namespace"
+    helm uninstall "$release" -n "$namespace" >/dev/null 2>&1 || true
+    ok "Removed stale release state for $release"
+  fi
+}
+
+helm_release_exists() {
+  local release="$1"
+  local namespace="$2"
+
+  helm status "$release" -n "$namespace" >/dev/null 2>&1
+}
+
+detect_redis_install_namespace() {
+  local target_namespace="$1"
+  local legacy_namespace="databases"
+  local release="redis-operator"
+  local current_owner_namespace
+
+  if helm_release_exists "$release" "$target_namespace"; then
+    printf '%s\n' "$target_namespace"
+    return 0
+  fi
+
+  if [ "$target_namespace" != "$legacy_namespace" ] && helm_release_exists "$release" "$legacy_namespace"; then
+    echo "    Found existing Redis operator Helm release in legacy namespace $legacy_namespace; reusing it" >&2
+    printf '%s\n' "$legacy_namespace"
+    return 0
+  fi
+
+  current_owner_namespace="$(
+    kubectl get clusterrole "$release" \
+      -o jsonpath='{.metadata.annotations.meta\.helm\.sh/release-namespace}' \
+      2>/dev/null || true
+  )"
+
+  if [ -n "$current_owner_namespace" ] && [ "$current_owner_namespace" != "$target_namespace" ]; then
+    if helm_release_exists "$release" "$current_owner_namespace"; then
+      echo "    Found existing Redis operator ClusterRole owned by Helm release namespace $current_owner_namespace; reusing it" >&2
+      printf '%s\n' "$current_owner_namespace"
+      return 0
+    fi
+
+    die "Redis operator ClusterRole is still owned by Helm namespace $current_owner_namespace, but no matching Helm release was found there. Remove the stale redis-operator resources or reinstall using REDIS_NAMESPACE=$current_owner_namespace."
+  fi
+
+  printf '%s\n' "$target_namespace"
+}
+
+detect_install_namespace_from_clusterrole() {
+  local release="$1"
+  local target_namespace="$2"
+  local clusterrole_name="$3"
+  local owner_var_name="$4"
+  local display_name="$5"
+  local legacy_namespace="databases"
+  local current_owner_namespace
+
+  if helm_release_exists "$release" "$target_namespace"; then
+    printf '%s\n' "$target_namespace"
+    return 0
+  fi
+
+  if [ "$target_namespace" != "$legacy_namespace" ] && helm_release_exists "$release" "$legacy_namespace"; then
+    echo "    Found existing $display_name Helm release in legacy namespace $legacy_namespace; reusing it" >&2
+    printf '%s\n' "$legacy_namespace"
+    return 0
+  fi
+
+  current_owner_namespace="$(
+    kubectl get clusterrole "$clusterrole_name" \
+      -o jsonpath='{.metadata.annotations.meta\.helm\.sh/release-namespace}' \
+      2>/dev/null || true
+  )"
+
+  if [ -n "$current_owner_namespace" ] && [ "$current_owner_namespace" != "$target_namespace" ]; then
+    if helm_release_exists "$release" "$current_owner_namespace"; then
+      echo "    Found existing $display_name ClusterRole owned by Helm release namespace $current_owner_namespace; reusing it" >&2
+      printf '%s\n' "$current_owner_namespace"
+      return 0
+    fi
+
+    die "$display_name ClusterRole is still owned by Helm namespace $current_owner_namespace, but no matching Helm release was found there. Remove the stale $release resources or reinstall using $owner_var_name=$current_owner_namespace."
+  fi
+
+  printf '%s\n' "$target_namespace"
+}
+
 repos() {
   log "Adding Helm repositories"
   helm repo add cnpg https://cloudnative-pg.github.io/charts >/dev/null 2>&1 || true
@@ -186,7 +328,12 @@ repos() {
 }
 
 install_cnpg() {
-  skip_if_deployed cnpg "$CNPG_NAMESPACE" "CloudNativePG operator" && return 0
+  if operator_release_healthy \
+    cnpg "$CNPG_NAMESPACE" "CloudNativePG operator" "cnpg-cloudnative-pg" \
+    clusters.postgresql.cnpg.io poolers.postgresql.cnpg.io scheduledbackups.postgresql.cnpg.io; then
+    return 0
+  fi
+  remove_release_if_exists cnpg "$CNPG_NAMESPACE"
   log "Installing CloudNativePG operator"
   helm_upgrade_install_with_retry cnpg "$CNPG_NAMESPACE" cnpg/cloudnative-pg \
     --create-namespace \
@@ -197,7 +344,12 @@ install_cnpg() {
 }
 
 install_psmdb() {
-  skip_if_deployed psmdb-operator "$PSMDB_NAMESPACE" "Percona PSMDB operator" && return 0
+  if operator_release_healthy \
+    psmdb-operator "$PSMDB_NAMESPACE" "Percona PSMDB operator" "psmdb-operator" \
+    perconaservermongodbs.psmdb.percona.com; then
+    return 0
+  fi
+  remove_release_if_exists psmdb-operator "$PSMDB_NAMESPACE"
   log "Installing Percona PSMDB operator"
   helm_upgrade_install_with_retry psmdb-operator "$PSMDB_NAMESPACE" percona/psmdb-operator \
     --create-namespace \
@@ -208,7 +360,12 @@ install_psmdb() {
 }
 
 install_pxc() {
-  skip_if_deployed pxc-operator "$PXC_NAMESPACE" "Percona PXC operator" && return 0
+  if operator_release_healthy \
+    pxc-operator "$PXC_NAMESPACE" "Percona PXC operator" "pxc-operator" \
+    perconaxtradbclusters.pxc.percona.com; then
+    return 0
+  fi
+  remove_release_if_exists pxc-operator "$PXC_NAMESPACE"
   log "Installing Percona PXC operator"
   helm_upgrade_install_with_retry pxc-operator "$PXC_NAMESPACE" percona/pxc-operator \
     --create-namespace \
@@ -219,12 +376,23 @@ install_pxc() {
 }
 
 install_redis_operator() {
-  if skip_if_deployed redis-operator "$REDIS_NAMESPACE" "Redis operator"; then
+  local install_namespace
+
+  install_namespace="$(detect_redis_install_namespace "$REDIS_NAMESPACE")"
+
+  if [ "$install_namespace" != "$REDIS_NAMESPACE" ]; then
+    echo "    Requested Redis operator namespace $REDIS_NAMESPACE conflicts with existing ownership; using $install_namespace"
+  fi
+
+  if operator_release_healthy \
+    redis-operator "$install_namespace" "Redis operator" "redis-operator" \
+    redis.redis.redis.opstreelabs.in; then
     return 0
   fi
-  cleanup_pending_release redis-operator "$REDIS_NAMESPACE"
+  remove_release_if_exists redis-operator "$install_namespace"
+  cleanup_pending_release redis-operator "$install_namespace"
   log "Installing OpsTree Redis operator"
-  helm_upgrade_install_with_retry redis-operator "$REDIS_NAMESPACE" ot-helm/redis-operator \
+  helm_upgrade_install_with_retry redis-operator "$install_namespace" ot-helm/redis-operator \
     --create-namespace \
     --version "$REDIS_OPERATOR_VERSION" \
     --set "featureGates.GenerateConfigInInitContainer=true" \
@@ -234,7 +402,7 @@ install_redis_operator() {
     --set "resources.limits.memory=$REDIS_OPERATOR_LIMIT_MEMORY" \
     --wait --timeout "$REDIS_OPERATOR_TIMEOUT" \
     || die "Failed to install Redis operator"
-  ok "Redis operator installed in namespace $REDIS_NAMESPACE"
+  ok "Redis operator installed in namespace $install_namespace"
 }
 
 ensure_cert_manager() {
@@ -254,15 +422,36 @@ ensure_cert_manager() {
 }
 
 install_k8ssandra() {
+  local install_namespace
+
   ensure_cert_manager
-  skip_if_deployed k8ssandra-operator "$K8SSANDRA_NAMESPACE" "K8ssandra operator" && return 0
+  install_namespace="$(
+    detect_install_namespace_from_clusterrole \
+      "k8ssandra-operator" \
+      "$K8SSANDRA_NAMESPACE" \
+      "k8ssandra-operator-cass-operator-cr" \
+      "K8SSANDRA_NAMESPACE" \
+      "K8ssandra operator"
+  )"
+
+  if [ "$install_namespace" != "$K8SSANDRA_NAMESPACE" ]; then
+    echo "    Requested K8ssandra operator namespace $K8SSANDRA_NAMESPACE conflicts with existing ownership; using $install_namespace"
+  fi
+
+  if operator_release_healthy \
+    k8ssandra-operator "$install_namespace" "K8ssandra operator" "k8ssandra-operator" \
+    k8ssandraclusters.k8ssandra.io; then
+    return 0
+  fi
+  remove_release_if_exists k8ssandra-operator "$install_namespace"
   log "Installing K8ssandra operator"
-  helm_upgrade_install_with_retry k8ssandra-operator "$K8SSANDRA_NAMESPACE" k8ssandra/k8ssandra-operator \
+  cleanup_pending_release k8ssandra-operator "$install_namespace"
+  helm_upgrade_install_with_retry k8ssandra-operator "$install_namespace" k8ssandra/k8ssandra-operator \
     --create-namespace \
     --version "$K8SSANDRA_VERSION" \
     --wait --timeout 5m \
     || die "Failed to install K8ssandra operator"
-  ok "K8ssandra operator installed in namespace $K8SSANDRA_NAMESPACE"
+  ok "K8ssandra operator installed in namespace $install_namespace"
 }
 
 usage() {

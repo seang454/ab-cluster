@@ -1,4 +1,7 @@
-{{- if .Values.pooler.enabled }}
+{{- $conn := .Values.connectionHandling | default dict -}}
+{{- $connEnabled := get $conn "enabled" -}}
+{{- $connMode := get $conn "mode" | default "pooler" -}}
+{{- if and .Values.pooler.enabled (ne $connEnabled false) (eq $connMode "pooler") }}
 apiVersion: postgresql.cnpg.io/v1
 kind: Pooler
 metadata:

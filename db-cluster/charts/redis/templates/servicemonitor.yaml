@@ -1,0 +1,21 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "redis.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/instance: {{ include "redis.fullname" . }}
+    release: prometheus-stack-release
+spec:
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  selector:
+    matchLabels:
+      redis_setup_type: cluster
+  endpoints:
+    - port: redis-exporter
+      interval: {{ (.Values.monitoring.serviceMonitor.interval | default "30s") | quote }}
+      scrapeTimeout: {{ (.Values.monitoring.serviceMonitor.scrapeTimeout | default "10s") | quote }}

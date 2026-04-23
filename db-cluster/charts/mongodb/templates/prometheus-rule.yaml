@@ -1,0 +1,77 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "mongodb.fullname" . }}-alerts
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: mongodb
+    app.kubernetes.io/instance: {{ include "mongodb.fullname" . }}
+    {{- with .Values.alerts.prometheusRuleLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+  - name: {{ include "mongodb.fullname" . }}.health.rules
+    rules:
+    - alert: MongoDBPodsNotReady
+      expr: |
+        sum(
+          kube_pod_status_ready{
+            namespace="{{ .Release.Namespace }}",
+            condition="true",
+            pod=~"{{ include "mongodb.fullname" . }}-.*"
+          } == 0
+        ) > 0
+      for: 5m
+      labels:
+        severity: warning
+        service: mongodb
+      annotations:
+        summary: "MongoDB pods are not ready"
+        description: "One or more MongoDB pods for {{ include "mongodb.fullname" . }} are not ready in namespace {{ .Release.Namespace }}."
+    - alert: MongoDBPodsRestarting
+      expr: |
+        increase(
+          kube_pod_container_status_restarts_total{
+            namespace="{{ .Release.Namespace }}",
+            pod=~"{{ include "mongodb.fullname" . }}-.*"
+          }[15m]
+        ) > 0
+      for: 5m
+      labels:
+        severity: warning
+        service: mongodb
+      annotations:
+        summary: "MongoDB pods are restarting"
+        description: "One or more MongoDB containers for {{ include "mongodb.fullname" . }} restarted during the last 15 minutes."
+  - name: {{ include "mongodb.fullname" . }}.storage.rules
+    rules:
+    - alert: MongoDBPVCUsageHigh
+      expr: |
+        (
+          kubelet_volume_stats_used_bytes{namespace="{{ .Release.Namespace }}", persistentvolumeclaim=~"{{ include "mongodb.fullname" . }}.*"}
+          /
+          kubelet_volume_stats_capacity_bytes{namespace="{{ .Release.Namespace }}", persistentvolumeclaim=~"{{ include "mongodb.fullname" . }}.*"}
+        ) * 100 > {{ .Values.alerts.storage.warningPercent }}
+      for: {{ .Values.alerts.storage.for }}
+      labels:
+        severity: warning
+        service: mongodb
+      annotations:
+        summary: "MongoDB PVC usage is above {{ .Values.alerts.storage.warningPercent }}%"
+        description: "PVC {{ `{{ $labels.persistentvolumeclaim }}` }} in namespace {{ `{{ $labels.namespace }}` }} is {{ `{{ $value | printf \"%.1f\" }}` }}% full."
+    - alert: MongoDBPVCUsageCritical
+      expr: |
+        (
+          kubelet_volume_stats_used_bytes{namespace="{{ .Release.Namespace }}", persistentvolumeclaim=~"{{ include "mongodb.fullname" . }}.*"}
+          /
+          kubelet_volume_stats_capacity_bytes{namespace="{{ .Release.Namespace }}", persistentvolumeclaim=~"{{ include "mongodb.fullname" . }}.*"}
+        ) * 100 > {{ .Values.alerts.storage.criticalPercent }}
+      for: {{ .Values.alerts.storage.for }}
+      labels:
+        severity: critical
+        service: mongodb
+      annotations:
+        summary: "MongoDB PVC usage is above {{ .Values.alerts.storage.criticalPercent }}%"
+        description: "PVC {{ `{{ $labels.persistentvolumeclaim }}` }} in namespace {{ `{{ $labels.namespace }}` }} is {{ `{{ $value | printf \"%.1f\" }}` }}% full. Immediate action is required."

@@ -1,0 +1,26 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ include "mongodb.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: mongodb
+    app.kubernetes.io/instance: {{ include "mongodb.fullname" . }}
+    {{- with (.Values.monitoring.podMonitor.labels) }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ include "mongodb.fullname" . }}
+      app.kubernetes.io/component: mongod
+      monitoring.seang.shop/mongodb-exporter: "true"
+  podMetricsEndpoints:
+    - port: mongodb-metrics
+      path: /metrics
+      interval: {{ (.Values.monitoring.podMonitor.interval | default "30s") | quote }}
+      scrapeTimeout: {{ (.Values.monitoring.podMonitor.scrapeTimeout | default "10s") | quote }}

@@ -1,0 +1,77 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "redis.fullname" . }}-alerts
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/instance: {{ include "redis.fullname" . }}
+    {{- with .Values.alerts.prometheusRuleLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+  - name: {{ include "redis.fullname" . }}.health.rules
+    rules:
+    - alert: RedisPodsNotReady
+      expr: |
+        sum(
+          kube_pod_status_ready{
+            namespace="{{ .Release.Namespace }}",
+            condition="true",
+            pod=~"{{ include "redis.fullname" . }}-.*"
+          } == 0
+        ) > 0
+      for: 5m
+      labels:
+        severity: warning
+        service: redis
+      annotations:
+        summary: "Redis pods are not ready"
+        description: "One or more Redis pods for {{ include "redis.fullname" . }} are not ready in namespace {{ .Release.Namespace }}."
+    - alert: RedisPodsRestarting
+      expr: |
+        increase(
+          kube_pod_container_status_restarts_total{
+            namespace="{{ .Release.Namespace }}",
+            pod=~"{{ include "redis.fullname" . }}-.*"
+          }[15m]
+        ) > 0
+      for: 5m
+      labels:
+        severity: warning
+        service: redis
+      annotations:
+        summary: "Redis pods are restarting"
+        description: "One or more Redis containers for {{ include "redis.fullname" . }} restarted during the last 15 minutes."
+  - name: {{ include "redis.fullname" . }}.storage.rules
+    rules:
+    - alert: RedisPVCUsageHigh
+      expr: |
+        (
+          kubelet_volume_stats_used_bytes{namespace="{{ .Release.Namespace }}", persistentvolumeclaim=~"{{ include "redis.fullname" . }}.*"}
+          /
+          kubelet_volume_stats_capacity_bytes{namespace="{{ .Release.Namespace }}", persistentvolumeclaim=~"{{ include "redis.fullname" . }}.*"}
+        ) * 100 > {{ .Values.alerts.storage.warningPercent }}
+      for: {{ .Values.alerts.storage.for }}
+      labels:
+        severity: warning
+        service: redis
+      annotations:
+        summary: "Redis PVC usage is above {{ .Values.alerts.storage.warningPercent }}%"
+        description: "PVC {{ `{{ $labels.persistentvolumeclaim }}` }} in namespace {{ `{{ $labels.namespace }}` }} is {{ `{{ $value | printf \"%.1f\" }}` }}% full."
+    - alert: RedisPVCUsageCritical
+      expr: |
+        (
+          kubelet_volume_stats_used_bytes{namespace="{{ .Release.Namespace }}", persistentvolumeclaim=~"{{ include "redis.fullname" . }}.*"}
+          /
+          kubelet_volume_stats_capacity_bytes{namespace="{{ .Release.Namespace }}", persistentvolumeclaim=~"{{ include "redis.fullname" . }}.*"}
+        ) * 100 > {{ .Values.alerts.storage.criticalPercent }}
+      for: {{ .Values.alerts.storage.for }}
+      labels:
+        severity: critical
+        service: redis
+      annotations:
+        summary: "Redis PVC usage is above {{ .Values.alerts.storage.criticalPercent }}%"
+        description: "PVC {{ `{{ $labels.persistentvolumeclaim }}` }} in namespace {{ `{{ $labels.namespace }}` }} is {{ `{{ $value | printf \"%.1f\" }}` }}% full. Immediate action is required."

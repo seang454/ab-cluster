@@ -1,3 +1,4 @@
+{{- $operatorNamespaces := .Values.operatorNamespaces | default dict -}}
 {{- if .Values.postgresql.enabled }}
 ---
 apiVersion: batch/v1
@@ -23,7 +24,7 @@ spec:
         - |
           echo "Waiting for CloudNativePG operator..."
           kubectl rollout status deployment/cnpg-cloudnative-pg \
-            -n cnpg-system --timeout=300s
+            -n {{ ($operatorNamespaces.cnpg | default "cnpg-system") | quote }} --timeout=300s
           echo "CloudNativePG operator is ready"
 {{- end }}
 ---
@@ -51,7 +52,7 @@ spec:
         - |
           echo "Waiting for Percona MongoDB operator..."
           kubectl rollout status deployment/psmdb-operator \
-            -n {{ .Release.Namespace }} --timeout=300s
+            -n {{ ($operatorNamespaces.psmdb | default "database-operators") | quote }} --timeout=300s
           echo "Percona MongoDB operator is ready"
 {{- end }}
 ---
@@ -79,7 +80,7 @@ spec:
         - |
           echo "Waiting for Percona MySQL operator..."
           kubectl rollout status deployment/pxc-operator \
-            -n {{ .Release.Namespace }} --timeout=300s
+            -n {{ ($operatorNamespaces.pxc | default "database-operators") | quote }} --timeout=300s
           echo "Percona MySQL operator is ready"
 {{- end }}
 ---
@@ -107,7 +108,7 @@ spec:
         - |
           echo "Waiting for Redis operator..."
           kubectl rollout status deployment/redis-operator \
-            -n {{ .Release.Namespace }} --timeout=300s
+            -n {{ ($operatorNamespaces.redis | default "database-operators") | quote }} --timeout=300s
           echo "Redis operator is ready"
 {{- end }}
 ---
@@ -135,6 +136,6 @@ spec:
         - |
           echo "Waiting for K8ssandra operator..."
           kubectl rollout status deployment/k8ssandra-operator \
-            -n {{ .Release.Namespace }} --timeout=300s
+            -n {{ ($operatorNamespaces.k8ssandra | default "database-operators") | quote }} --timeout=300s
           echo "K8ssandra operator is ready"
 {{- end }}
