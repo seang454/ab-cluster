@@ -88,7 +88,10 @@ data:
 
     {{- range $i, $_ := until $mongoInstances }}
     backend mongodb_backend_{{ $i }}
-      server mongodb{{ $i }} {{ $.Release.Name }}-mongodb-rs0-{{ $i }}.{{ $.Release.Name }}-mongodb-rs0.{{ $.Release.Namespace }}.svc:27017 check resolvers kube_dns init-addr none
+      # Use raw TCP passthrough without active health checks. MongoDB now
+      # requires TLS on these member ports, and HAProxy's default check marks
+      # otherwise healthy backends down during certificate/auth rotation.
+      server mongodb{{ $i }} {{ $.Release.Name }}-mongodb-rs0-{{ $i }}.{{ $.Release.Name }}-mongodb-rs0.{{ $.Release.Namespace }}.svc:27017 resolvers kube_dns init-addr none
     {{- end }}
     {{- else if and .Values.mongodb.enabled ($expose.mongodb | default true) }}
     # Public MongoDB listener -> internal replica set service.

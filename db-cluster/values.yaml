@@ -313,15 +313,16 @@ mongodb:
       - mongo-db-1.seang.shop
       - mongo-db-2.seang.shop
   tls:
-    enabled: false
-    # Keep this disabled by default unless you provide matching MongoDB TLS
-    # secrets. When TLS is off, do not require custom X.509 subject attributes
-    # in the replset config or mongod will reject the operator-generated certs.
-    mode: disabled
+    # External replica-set access through the shared TCP proxy relies on TLS
+    # SNI to route each public hostname to the correct MongoDB member. Keep TLS
+    # on by default and let cert-manager issue the certs that include the
+    # public hostnames plus internal service DNS names.
+    enabled: true
+    mode: certManager
     sslSecretName: ""
     sslInternalSecretName: ""
     certManager:
-      generateCA: false
+      generateCA: true
       issuer:
         name: ""
         kind: ClusterIssuer

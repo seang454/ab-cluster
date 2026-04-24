@@ -180,8 +180,8 @@ mongodb:
       - mongo-db-1.example.com
       - mongo-db-2.example.com
   tls:
-    enabled: false
-    mode: disabled
+    enabled: true
+    mode: certManager
   cluster:
     configuration: |
       net:
@@ -209,7 +209,8 @@ cassandra:
 
 For MongoDB replica-set clients connecting through the TCP proxy, use all
 member hostnames on port `27017`. Do not use `27018` or `27019`; the hostname
-selects the backend, not the port.
+selects the backend, not the port. This path expects MongoDB TLS to stay
+enabled so HAProxy can route by TLS SNI.
 
 For production, prefer this pattern instead of storing real passwords in
 `values.yaml`:
