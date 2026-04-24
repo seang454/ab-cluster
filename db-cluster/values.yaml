@@ -251,7 +251,7 @@ postgresql:
         interval: 30s
         scrapeTimeout: 10s
         labels:
-          release: prometheus-stack-release
+          release: prometheus-stack1-release
 
   alerts:
     enabled: true
@@ -301,7 +301,9 @@ mongodb:
     backupPassword: ""
     replicationKey: ""
   externalAccess:
-    enabled: false
+    # Enable split-horizon external access by default for MongoDB so clients can
+    # connect through the TCP proxy using public member hostnames on port 27017.
+    enabled: true
     replicaSetHorizons:
       enabled: true
       basePort: 27017
@@ -312,7 +314,10 @@ mongodb:
       - mongo-db-2.seang.shop
   tls:
     enabled: false
-    mode: certManager
+    # Keep this disabled by default unless you provide matching MongoDB TLS
+    # secrets. When TLS is off, do not require custom X.509 subject attributes
+    # in the replset config or mongod will reject the operator-generated certs.
+    mode: disabled
     sslSecretName: ""
     sslInternalSecretName: ""
     certManager:
@@ -323,7 +328,9 @@ mongodb:
         group: cert-manager.io
 
   cluster:
-    # Replica set members plus internal TLS/X.509 behavior for the Percona operator.
+    # Replica set members plus operator-safe base config. Avoid forcing
+    # clusterAuthX509 subject attributes here unless your TLS certs are issued
+    # with an exact matching DN.
     crVersion: "1.22.0"
     instances: 3
     image: percona/percona-server-mongodb:7.0.30-16
@@ -331,8 +338,6 @@ mongodb:
       net:
         tls:
           allowConnectionsWithoutCertificates: true
-          clusterAuthX509:
-            attributes: O=MongoDB, OU=MongoDB Server
     env:
       - name: PATH
         value: /opt/percona:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin

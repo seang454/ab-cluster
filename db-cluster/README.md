@@ -173,6 +173,20 @@ mongodb:
     databaseAdminPassword: "YourSecurePassword!"
     backupPassword: "YourSecurePassword!"
     replicationKey: "YourSecureKey!"
+  externalAccess:
+    enabled: true
+    publicHostnames:
+      - mongo-db-0.example.com
+      - mongo-db-1.example.com
+      - mongo-db-2.example.com
+  tls:
+    enabled: false
+    mode: disabled
+  cluster:
+    configuration: |
+      net:
+        tls:
+          allowConnectionsWithoutCertificates: true
 
 mysql:
   enabled: true
@@ -192,6 +206,10 @@ cassandra:
   credentials:
     password: "YourSecurePassword!"
 ```
+
+For MongoDB replica-set clients connecting through the TCP proxy, use all
+member hostnames on port `27017`. Do not use `27018` or `27019`; the hostname
+selects the backend, not the port.
 
 For production, prefer this pattern instead of storing real passwords in
 `values.yaml`:
@@ -222,6 +240,9 @@ for the other database operators so credentials stay outside the Helm values.
   overridden.
 - Do not force PostgreSQL-only resources such as `Pooler` onto other database
   types. Use the equivalent operator-native feature instead.
+- For MongoDB, do not set `clusterAuthX509.attributes` unless your TLS
+  certificates are issued with a matching subject DN. A mismatch causes
+  `mongod` to fail with `InvalidSSLConfiguration`.
 
 ## PostgreSQL Backups To MinIO
 

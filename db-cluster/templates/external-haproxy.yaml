@@ -7,6 +7,8 @@
 {{- $mongoExt := .Values.mongodb.externalAccess | default dict -}}
 {{- $mongoHorizons := get $mongoExt "replicaSetHorizons" | default dict -}}
 {{- $mongoPublicHosts := $mongoExt.publicHostnames | default list -}}
+{{- $mongoCluster := .Values.mongodb.cluster | default dict -}}
+{{- $mongoInstances := int (get $mongoCluster "instances" | default 1) -}}
 {{- $mongoHorizonsEnabled := and .Values.mongodb.enabled ($expose.mongodb | default true) ($mongoExt.enabled | default false) ($mongoHorizons.enabled | default false) (gt (len $mongoPublicHosts) 0) -}}
 {{- $pg := .Values.postgresql | default dict -}}
 {{- $pgProxy := get $proxy "postgresql" | default dict -}}
@@ -84,7 +86,7 @@ data:
       {{- end }}
       default_backend mongodb_backend_0
 
-    {{- range $i, $_ := until (int .Values.mongodb.cluster.instances) }}
+    {{- range $i, $_ := until $mongoInstances }}
     backend mongodb_backend_{{ $i }}
       server mongodb{{ $i }} {{ $.Release.Name }}-mongodb-rs0-{{ $i }}.{{ $.Release.Name }}-mongodb-rs0.{{ $.Release.Namespace }}.svc:27017 check resolvers kube_dns init-addr none
     {{- end }}

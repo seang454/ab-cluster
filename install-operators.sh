@@ -17,6 +17,8 @@ PXC_VERSION="${PXC_VERSION:-1.14.0}"
 REDIS_OPERATOR_VERSION="${REDIS_OPERATOR_VERSION:-0.24.0}"
 K8SSANDRA_VERSION="${K8SSANDRA_VERSION:-1.14.0}"
 CERT_MANAGER_VERSION="${CERT_MANAGER_VERSION:-v1.15.3}"
+PSMDB_WATCH_ALL_NAMESPACES="${PSMDB_WATCH_ALL_NAMESPACES:-true}"
+PXC_WATCH_ALL_NAMESPACES="${PXC_WATCH_ALL_NAMESPACES:-true}"
 REDIS_OPERATOR_REQUEST_CPU="${REDIS_OPERATOR_REQUEST_CPU:-100m}"
 REDIS_OPERATOR_REQUEST_MEMORY="${REDIS_OPERATOR_REQUEST_MEMORY:-128Mi}"
 REDIS_OPERATOR_LIMIT_CPU="${REDIS_OPERATOR_LIMIT_CPU:-250m}"
@@ -190,6 +192,30 @@ deployment_ready() {
   [ -n "$ready" ] && [ "$ready" != "0" ] && [ "$ready" = "${replicas:-}" ]
 }
 
+deployment_env_value() {
+  local namespace="$1"
+  local deployment="$2"
+  local env_name="$3"
+
+  kubectl get deployment "$deployment" -n "$namespace" \
+    -o jsonpath="{range .spec.template.spec.containers[*].env[?(@.name=='$env_name')]}{.value}{end}" \
+    2>/dev/null || true
+}
+
+deployment_watch_scope_matches() {
+  local namespace="$1"
+  local deployment="$2"
+  local want_cluster_wide="$3"
+  local watch_namespace
+
+  watch_namespace="$(deployment_env_value "$namespace" "$deployment" "WATCH_NAMESPACE")"
+  if [ "$want_cluster_wide" = "true" ]; then
+    [ -z "$watch_namespace" ]
+  else
+    [ "$watch_namespace" = "$namespace" ]
+  fi
+}
+
 crd_present() {
   local crd="$1"
   kubectl get crd "$crd" >/dev/null 2>&1
@@ -219,6 +245,27 @@ operator_release_healthy() {
   done
 
   ok "$label already installed and healthy in namespace $namespace; skipping"
+  return 0
+}
+
+percona_operator_release_healthy() {
+  local release="$1"
+  local namespace="$2"
+  local label="$3"
+  local deployment="$4"
+  local watch_all_namespaces="$5"
+  shift 5
+
+  if ! operator_release_healthy "$release" "$namespace" "$label" "$deployment" "$@"; then
+    return 1
+  fi
+
+  if ! deployment_watch_scope_matches "$namespace" "$deployment" "$watch_all_namespaces"; then
+    echo "    $label is installed, but WATCH_NAMESPACE is not configured for cluster-wide control; reinstalling"
+    return 1
+  fi
+
+  ok "$label watch scope matches expected mode; skipping"
   return 0
 }
 
@@ -344,8 +391,9 @@ install_cnpg() {
 }
 
 install_psmdb() {
-  if operator_release_healthy \
+  if percona_operator_release_healthy \
     psmdb-operator "$PSMDB_NAMESPACE" "Percona PSMDB operator" "psmdb-operator" \
+    "$PSMDB_WATCH_ALL_NAMESPACES" \
     perconaservermongodbs.psmdb.percona.com; then
     return 0
   fi
@@ -354,14 +402,16 @@ install_psmdb() {
   helm_upgrade_install_with_retry psmdb-operator "$PSMDB_NAMESPACE" percona/psmdb-operator \
     --create-namespace \
     --version "$PSMDB_VERSION" \
+    --set "watchAllNamespaces=$PSMDB_WATCH_ALL_NAMESPACES" \
     --wait --timeout 5m \
     || die "Failed to install Percona PSMDB operator"
   ok "Percona PSMDB installed in namespace $PSMDB_NAMESPACE"
 }
 
 install_pxc() {
-  if operator_release_healthy \
+  if percona_operator_release_healthy \
     pxc-operator "$PXC_NAMESPACE" "Percona PXC operator" "pxc-operator" \
+    "$PXC_WATCH_ALL_NAMESPACES" \
     perconaxtradbclusters.pxc.percona.com; then
     return 0
   fi
@@ -370,6 +420,7 @@ install_pxc() {
   helm_upgrade_install_with_retry pxc-operator "$PXC_NAMESPACE" percona/pxc-operator \
     --create-namespace \
     --version "$PXC_VERSION" \
+    --set "watchAllNamespaces=$PXC_WATCH_ALL_NAMESPACES" \
     --wait --timeout 5m \
     || die "Failed to install Percona PXC operator"
   ok "Percona PXC installed in namespace $PXC_NAMESPACE"
