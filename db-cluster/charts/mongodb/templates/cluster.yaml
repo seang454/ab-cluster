@@ -5,6 +5,9 @@
 {{- $basePort := int ($horizons.basePort | default 27017) -}}
 {{- $horizonsEnabled := and ($ext.enabled | default false) ($horizons.enabled | default false) (eq (len $publicHosts) $instances) -}}
 {{- $mongodbBackupSecretName := .Values.backup.s3.credentialSecret | default (printf "minio-credentials-%s" .Release.Name) -}}
+{{- $proxy := .Values.externalTcpProxy | default dict -}}
+{{- $kubeClusterDomain := get $proxy "kubeClusterDomain" | default "" -}}
+{{- $clusterServiceDNSSuffix := .Values.clusterServiceDNSSuffix | default $kubeClusterDomain -}}
 apiVersion: psmdb.percona.com/v1
 kind: PerconaServerMongoDB
 metadata:
@@ -13,6 +16,14 @@ metadata:
 spec:
   crVersion: {{ .Values.cluster.crVersion | quote }}
   image: {{ .Values.cluster.image }}
+  {{- with .Values.unsafeFlags }}
+  unsafeFlags:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- if $clusterServiceDNSSuffix }}
+  clusterServiceDNSMode: {{ .Values.clusterServiceDNSMode | default "Internal" | quote }}
+  clusterServiceDNSSuffix: {{ printf "svc.%s" $clusterServiceDNSSuffix | quote }}
+  {{- end }}
   {{- if .Values.tls.enabled }}
   tls:
     mode: requireTLS
@@ -39,7 +50,7 @@ spec:
     configuration: |
       {{- . | nindent 6 }}
     {{- end }}
-    {{- if or .Values.cluster.sidecars true }}
+    {{- if .Values.cluster.sidecars }}
     sidecars:
       {{- with .Values.cluster.sidecars }}
       {{- toYaml . | nindent 4 }}

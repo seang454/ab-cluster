@@ -1,0 +1,29 @@
+externalTcpProxy:
+  kubeClusterDomain: k8scluster
+
+mongodb:
+  enabled: true
+  operator:
+    enabled: false
+  unsafeFlags:
+    replsetSize: true
+  clusterServiceDNSSuffix: k8scluster
+  externalAccess:
+    enabled: false
+    replicaSetHorizons:
+      enabled: false
+  cluster:
+    instances: 1
+    configuration: ""
+  credentials:
+    clusterAdminUser: clusterAdmin
+    clusterAdminPassword: "2f0900b9d5bdfbf6ce8ea122ab48dd7a"
+    userAdminUser: userAdmin
+    userAdminPassword: "e1b7b0c9947ce9a63b380aa98a2cf7d6"
+    clusterMonitorUser: clusterMonitor
+    clusterMonitorPassword: "203c45df24c19588b4a9186324e96d6f"
+    databaseAdminUser: databaseAdmin
+    databaseAdminPassword: "65c2a9a8bec595864b8dd6627b4ab47e"
+    backupUser: backup
+    backupPassword: "3ebe0691ae38ed7963cb4f0de52f90d0"
+    replicationKey: "8c0949e56a809521d621a91082a36101a566d3e48fb9560bdd990552ab1cc7cf"

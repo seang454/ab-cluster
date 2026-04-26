@@ -60,7 +60,7 @@ externalTcpProxy:
   clusterDomain: seang.shop
   # Kubernetes service DNS suffix used for internal HAProxy backends.
   # Override this if your cluster does not use the default `cluster.local`.
-  kubeClusterDomain: k8scluster
+  kubeClusterDomain: cluster.local
   expose:
     # Enable only the database ports you actually want HAProxy to publish.
     postgresql: true
@@ -105,7 +105,7 @@ postgresql:
     standby: ""
   externalAccess:
     # LoadBalancer mode is kept for clusters that want direct public exposure.
-    enabled: false
+    enabled: true
     serviceType: LoadBalancer
     serviceName: ""
     externalIP: ""
@@ -282,6 +282,11 @@ mongodb:
   # MongoDB keeps its own operator-native backup task flow and direct/service-based
   # connection handling instead of a PostgreSQL Pooler CRD.
   enabled: false
+  # Override the internal Kubernetes service DNS suffix when your cluster does
+  # not use the default `svc.cluster.local`. By default this reuses the shared
+  # external TCP proxy `kubeClusterDomain` value.
+  clusterServiceDNSSuffix: cluster.local
+  clusterServiceDNSMode: Internal
   # MongoDB connection handling stays driver/operator-native. Use replica set
   # services internally and split horizons when external member endpoints are
   # required.
@@ -446,7 +451,7 @@ mysql:
     clusterCheckPassword: ""
   externalAccess:
     # External hostnames are only used when the database is intentionally public.
-    enabled: false
+    enabled: true
     loadBalancerClass: ""
     loadBalancerSourceRanges: []
     annotations: {}
@@ -560,7 +565,7 @@ redis:
     password: ""
   externalAccess:
     # Public hostname for Redis when exposing it outside the cluster.
-    enabled: false
+    enabled: true
     publicHostnames:
       - redis-db.seang.shop
   tls:
@@ -684,13 +689,16 @@ cassandra:
     cleanupOnDisable: true
     serverSecretName: cassandra-server-keystore-secret
     clientSecretName: cassandra-client-trust-secret
+    # SECURITY FIX: Removed hardcoded passwords. These MUST be provided via Vault/ExternalSecret
+    # or command-line override. Never commit plaintext passwords to version control.
+    # Example override: --set cassandra.tls.serverSecret.keystorePassword="$(vault kv get -field=password secret/cassandra/server)"
     serverSecret:
-      keystorePassword: "mypassword"
-      truststorePassword: "mypassword"
+      keystorePassword: ""
+      truststorePassword: ""
 
     clientSecret:
-      keystorePassword: "mypassword"
-      truststorePassword: "mypassword"
+      keystorePassword: ""
+      truststorePassword: ""
 
   cluster:
     # Cassandra needs memory-heavy config-builder and logger sidecars to stay healthy.
