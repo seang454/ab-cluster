@@ -395,6 +395,8 @@ mongodb:
     # Percona backup jobs use the namespace as the bucket and store backups
     # under <release>/<cluster>.
     enabled: true
+    image: percona/percona-backup-mongodb:2.12.0
+    startingDeadlineSeconds: 600
     storageType: s3
     task:
       name: daily-backup

@@ -124,7 +124,8 @@ spec:
   {{- $storageType := .Values.backup.storageType | default "minio" }}
   backup:
     enabled: true
-    image: percona/percona-backup-mongodb:2.3.0
+    image: {{ .Values.backup.image | default "percona/percona-backup-mongodb:2.12.0" | quote }}
+    startingDeadlineSeconds: {{ .Values.backup.startingDeadlineSeconds | default 600 }}
     storages:
       s3-storage:
         type: {{ $storageType }}
