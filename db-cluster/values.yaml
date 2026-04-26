@@ -56,9 +56,11 @@ externalTcpProxy:
   service:
     enabled: false
     type: ClusterIP
-  # Set the Kubernetes cluster domain so HAProxy can resolve service backends
-  # with a fully qualified name instead of relying on search domains.
-  clusterDomain: k8scluster
+  # Public DNS zone used by your external database hostnames.
+  clusterDomain: seang.shop
+  # Kubernetes service DNS suffix used for internal HAProxy backends.
+  # Override this if your cluster does not use the default `cluster.local`.
+  kubeClusterDomain: k8scluster
   expose:
     # Enable only the database ports you actually want HAProxy to publish.
     postgresql: true

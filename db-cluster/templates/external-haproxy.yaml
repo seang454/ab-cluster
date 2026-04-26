@@ -12,13 +12,14 @@
 {{- $mongoHorizonsEnabled := and .Values.mongodb.enabled ($expose.mongodb | default true) ($mongoExt.enabled | default false) ($mongoHorizons.enabled | default false) (gt (len $mongoPublicHosts) 0) -}}
 {{- $pg := .Values.postgresql | default dict -}}
 {{- $pgProxy := get $proxy "postgresql" | default dict -}}
-{{- $proxyClusterDomain := get $proxy "clusterDomain" | default "" -}}
+{{- $kubeClusterDomain := get $proxy "kubeClusterDomain" | default "" -}}
+{{- $svcSuffix := "svc" -}}
+{{- if $kubeClusterDomain -}}
+{{- $svcSuffix = printf "svc.%s" $kubeClusterDomain -}}
+{{- end -}}
 {{- $pgExternalBackendAddress := get $pgProxy "backendAddress" | default "" -}}
 {{- $pgExternalBackendService := get $pgProxy "backendServiceName" | default (printf "%s-postgresql-rw" .Release.Name) -}}
-{{- $pgExternalBackendHost := printf "%s.%s.svc" $pgExternalBackendService .Release.Namespace -}}
-{{- if $proxyClusterDomain -}}
-{{- $pgExternalBackendHost = printf "%s.%s" $pgExternalBackendHost $proxyClusterDomain -}}
-{{- end -}}
+{{- $pgExternalBackendHost := printf "%s.%s.%s" $pgExternalBackendService .Release.Namespace $svcSuffix -}}
 {{- if $pgExternalBackendAddress -}}
 {{- $pgExternalBackendHost = $pgExternalBackendAddress -}}
 {{- end -}}
@@ -72,7 +73,7 @@ data:
       default_backend mysql_backend
 
     backend mysql_backend
-      server mysql {{ .Release.Name }}-mysql-haproxy.{{ .Release.Namespace }}.svc:3306 check resolvers kube_dns init-addr none
+      server mysql {{ .Release.Name }}-mysql-haproxy.{{ .Release.Namespace }}.{{ $svcSuffix }}:3306 check resolvers kube_dns init-addr none
     {{ end }}
 
     {{- if $mongoHorizonsEnabled }}
@@ -91,7 +92,7 @@ data:
       # Use raw TCP passthrough without active health checks. MongoDB now
       # requires TLS on these member ports, and HAProxy's default check marks
       # otherwise healthy backends down during certificate/auth rotation.
-      server mongodb{{ $i }} {{ $.Release.Name }}-mongodb-rs0-{{ $i }}.{{ $.Release.Name }}-mongodb-rs0.{{ $.Release.Namespace }}.svc:27017 resolvers kube_dns init-addr none
+      server mongodb{{ $i }} {{ $.Release.Name }}-mongodb-rs0-{{ $i }}.{{ $.Release.Name }}-mongodb-rs0.{{ $.Release.Namespace }}.{{ $svcSuffix }}:27017 resolvers kube_dns resolve-prefer ipv4 init-addr libc,none
     {{- end }}
     {{- else if and .Values.mongodb.enabled ($expose.mongodb | default true) }}
     # Public MongoDB listener -> internal replica set service.
@@ -100,7 +101,7 @@ data:
       default_backend mongodb_backend
 
     backend mongodb_backend
-      server mongodb {{ .Release.Name }}-mongodb-rs0.{{ .Release.Namespace }}.svc:27017 check resolvers kube_dns init-addr none
+      server mongodb {{ .Release.Name }}-mongodb-rs0.{{ .Release.Namespace }}.{{ $svcSuffix }}:27017 check resolvers kube_dns init-addr none
     {{ end }}
 
     {{- if and .Values.redis.enabled ($expose.redis | default true) }}
@@ -110,7 +111,7 @@ data:
       default_backend redis_backend
 
     backend redis_backend
-      server redis {{ .Release.Name }}-redis-leader.{{ .Release.Namespace }}.svc:6379 check resolvers kube_dns init-addr none
+      server redis {{ .Release.Name }}-redis-leader.{{ .Release.Namespace }}.{{ $svcSuffix }}:6379 check resolvers kube_dns init-addr none
     {{ end }}
 
     {{- if and .Values.cassandra.enabled ($expose.cassandra | default true) }}
@@ -120,7 +121,7 @@ data:
       default_backend cassandra_backend
 
     backend cassandra_backend
-      server cassandra {{ $cassandraCluster }}-{{ $cassandraDatacenter }}-service.{{ .Release.Namespace }}.svc:9042 check resolvers kube_dns init-addr none
+      server cassandra {{ $cassandraCluster }}-{{ $cassandraDatacenter }}-service.{{ .Release.Namespace }}.{{ $svcSuffix }}:9042 check resolvers kube_dns init-addr none
     {{ end }}
 ---
 apiVersion: apps/v1

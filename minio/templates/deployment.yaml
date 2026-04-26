@@ -6,6 +6,8 @@ metadata:
     {{- include "minio.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       {{- include "minio.selectorLabels" . | nindent 6 }}
@@ -48,6 +50,10 @@ spec:
                   key: {{ .Values.auth.rootPasswordKey }}
             - name: MINIO_REGION
               value: {{ .Values.bucketProvisioning.region | quote }}
+            {{- if .Values.ingress.enabled }}
+            - name: MINIO_BROWSER_REDIRECT_URL
+              value: {{ .Values.ingress.externalURL | default (printf "%s://%s" (ternary "https" "http" .Values.ingress.tls.enabled) .Values.ingress.host) | quote }}
+            {{- end }}
           ports:
             - name: api
               containerPort: {{ .Values.service.apiPort }}

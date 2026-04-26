@@ -1877,6 +1877,26 @@ EOF
     wait_for_pods_ready "$MINIO_NAMESPACE" "app.kubernetes.io/name=minio,app.kubernetes.io/instance=$MINIO_RELEASE" 30 10 "MinIO pods" \
         || die "MinIO pods did not become Ready"
 
+    info "Waiting for MinIO TLS secret to be issued..."
+    for i in $(seq 1 30); do
+        if kubectl get secret minio-tls -n "$MINIO_NAMESPACE" >/dev/null 2>&1; then
+            ok "MinIO TLS secret is ready"
+            break
+        fi
+        if ! kubectl get clusterissuer letsencrypt-prod >/dev/null 2>&1; then
+            die "MinIO TLS secret was not issued because ClusterIssuer letsencrypt-prod does not exist."
+        fi
+        challenge_reason="$(kubectl get challenge -n "$MINIO_NAMESPACE" \
+            -o jsonpath='{range .items[?(@.spec.dnsName=="minio.seang.shop")]}{.status.reason}{"\n"}{end}' \
+            2>/dev/null | head -n 1)"
+        if [ -n "$challenge_reason" ]; then
+            info "cert-manager challenge status: $challenge_reason"
+        fi
+        sleep 10
+    done
+    kubectl get secret minio-tls -n "$MINIO_NAMESPACE" >/dev/null 2>&1 \
+        || die "MinIO TLS secret was not issued. Check cert-manager, DNS for minio.seang.shop, and ingress reachability."
+
     ok "MinIO deployed"
 }
 

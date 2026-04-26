@@ -32,8 +32,11 @@ ingress:
   host: minio.seang.shop
   path: /
   pathType: Prefix
+  externalURL: https://minio.seang.shop
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
   tls:
     enabled: true
     secretName: minio-tls
