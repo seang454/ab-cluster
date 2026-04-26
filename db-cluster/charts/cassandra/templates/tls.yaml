@@ -5,6 +5,11 @@
 {{- if gt (len $publicHosts) 0 -}}
 {{- $publicHost = index $publicHosts 0 -}}
 {{- end -}}
+{{- $serviceName := printf "%s-%s-service" .Values.cluster.config.clusterName .Values.cluster.config.datacenter -}}
+{{- $dnsSans := list (printf "dns:%s" $publicHost) (printf "dns:%s" $serviceName) (printf "dns:%s.%s" $serviceName .Release.Namespace) (printf "dns:%s.%s.svc" $serviceName .Release.Namespace) -}}
+{{- range $host := $publicHosts -}}
+{{- $dnsSans = append $dnsSans (printf "dns:%s" $host) -}}
+{{- end -}}
 {{- $serverSecretName := include "cassandra.serverSecretName" . -}}
 {{- $clientSecretName := include "cassandra.clientSecretName" . -}}
 {{- $caConfigName := printf "%s-client-ca" (include "cassandra.fullname" .) -}}
@@ -78,6 +83,7 @@ spec:
         - |
           set -eu
           host="${CASSANDRA_PUBLIC_HOST:-cassandra-db.seang.shop}"
+          san_list="${CASSANDRA_SAN_LIST}"
           server_pass="${SERVER_KEYSTORE_PASSWORD}"
           server_trust_pass="${SERVER_TRUSTSTORE_PASSWORD}"
           client_pass="${CLIENT_KEYSTORE_PASSWORD}"
@@ -91,7 +97,7 @@ spec:
             -keypass "$server_pass" \
             -validity 3650 \
             -dname "CN=${host}" \
-            -ext SAN=dns:${host} \
+            -ext "SAN=${san_list}" \
             -noprompt
 
           keytool -export \
@@ -115,6 +121,8 @@ spec:
         env:
         - name: CASSANDRA_PUBLIC_HOST
           value: {{ $publicHost | quote }}
+        - name: CASSANDRA_SAN_LIST
+          value: {{ join "," $dnsSans | quote }}
         - name: SERVER_KEYSTORE_PASSWORD
           value: {{ .Values.tls.serverSecret.keystorePassword | quote }}
         - name: SERVER_TRUSTSTORE_PASSWORD

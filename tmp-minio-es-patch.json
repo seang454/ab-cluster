@@ -1,0 +1,15 @@
+{
+  "spec": {
+    "target": {
+      "template": {
+        "data": {
+          "AWS_ACCESS_KEY_ID": "{{ index . \"root-user\" }}",
+          "AWS_SECRET_ACCESS_KEY": "{{ index . \"root-password\" }}",
+          "root-user": "{{ index . \"root-user\" }}",
+          "root-password": "{{ index . \"root-password\" }}",
+          "credentials": "[default]\naws_access_key_id = {{ index . \"root-user\" }}\naws_secret_access_key = {{ index . \"root-password\" }}\n"
+        }
+      }
+    }
+  }
+}

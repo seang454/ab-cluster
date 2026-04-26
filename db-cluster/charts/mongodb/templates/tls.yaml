@@ -3,6 +3,7 @@
 {{- $generateCA := get $cm "generateCA" | default true -}}
 {{- $ext := .Values.externalAccess | default dict -}}
 {{- $instances := int (.Values.cluster.instances | default 3) -}}
+{{- $clusterServiceDNSSuffix := .Values.clusterServiceDNSSuffix | default "" -}}
 {{- if and $tls.enabled (eq ($tls.mode | default "certManager") "certManager") }}
 {{- if $generateCA }}
 apiVersion: cert-manager.io/v1
@@ -60,13 +61,22 @@ spec:
   - {{ include "mongodb.fullname" . }}-rs0
   - {{ include "mongodb.fullname" . }}-rs0.{{ .Release.Namespace }}
   - {{ include "mongodb.fullname" . }}-rs0.{{ .Release.Namespace }}.svc
+  {{- if $clusterServiceDNSSuffix }}
+  - {{ include "mongodb.fullname" . }}-rs0.{{ .Release.Namespace }}.svc.{{ $clusterServiceDNSSuffix }}
+  {{- end }}
   {{- range $i, $_ := until $instances }}
   - {{ include "mongodb.fullname" $ }}-rs0-{{ $i }}
   - {{ include "mongodb.fullname" $ }}-rs0-{{ $i }}.{{ include "mongodb.fullname" $ }}-rs0
   - {{ include "mongodb.fullname" $ }}-rs0-{{ $i }}.{{ include "mongodb.fullname" $ }}-rs0.{{ $.Release.Namespace }}
   - {{ include "mongodb.fullname" $ }}-rs0-{{ $i }}.{{ include "mongodb.fullname" $ }}-rs0.{{ $.Release.Namespace }}.svc
+  {{- if $clusterServiceDNSSuffix }}
+  - {{ include "mongodb.fullname" $ }}-rs0-{{ $i }}.{{ include "mongodb.fullname" $ }}-rs0.{{ $.Release.Namespace }}.svc.{{ $clusterServiceDNSSuffix }}
+  {{- end }}
   - {{ include "mongodb.fullname" $ }}-rs0-{{ $i }}.{{ $.Release.Namespace }}
   - {{ include "mongodb.fullname" $ }}-rs0-{{ $i }}.{{ $.Release.Namespace }}.svc
+  {{- if $clusterServiceDNSSuffix }}
+  - {{ include "mongodb.fullname" $ }}-rs0-{{ $i }}.{{ $.Release.Namespace }}.svc.{{ $clusterServiceDNSSuffix }}
+  {{- end }}
   {{- end }}
   {{- range ($ext.publicHostnames | default list) }}
   - {{ . }}
@@ -102,6 +112,9 @@ spec:
   - "*.{{ include "mongodb.fullname" . }}-rs0"
   - "*.{{ include "mongodb.fullname" . }}-rs0.{{ .Release.Namespace }}"
   - "*.{{ include "mongodb.fullname" . }}-rs0.{{ .Release.Namespace }}.svc"
+  {{- if $clusterServiceDNSSuffix }}
+  - "*.{{ include "mongodb.fullname" . }}-rs0.{{ .Release.Namespace }}.svc.{{ $clusterServiceDNSSuffix }}"
+  {{- end }}
   issuerRef:
     {{- if $generateCA }}
     name: {{ include "mongodb.caIssuerName" . }}

@@ -1,0 +1,18 @@
+{
+  "spec": {
+    "backup": {
+      "storages": {
+        "s3-storage": {
+          "type": "s3",
+          "s3": {
+            "bucket": "ns-seang-02",
+            "region": "us-east-1",
+            "credentialsSecret": "minio-credentials-db-seang-mongo",
+            "endpointUrl": "http://my-minio-minio.storage.svc:9000",
+            "prefix": "db-seang-mongo/db-seang-mongo-mongodb"
+          }
+        }
+      }
+    }
+  }
+}

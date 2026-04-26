@@ -5,9 +5,7 @@
 {{- $basePort := int ($horizons.basePort | default 27017) -}}
 {{- $horizonsEnabled := and ($ext.enabled | default false) ($horizons.enabled | default false) (eq (len $publicHosts) $instances) -}}
 {{- $mongodbBackupSecretName := .Values.backup.s3.credentialSecret | default (printf "minio-credentials-%s" .Release.Name) -}}
-{{- $proxy := .Values.externalTcpProxy | default dict -}}
-{{- $kubeClusterDomain := get $proxy "kubeClusterDomain" | default "" -}}
-{{- $clusterServiceDNSSuffix := .Values.clusterServiceDNSSuffix | default $kubeClusterDomain -}}
+{{- $clusterServiceDNSSuffix := .Values.clusterServiceDNSSuffix | default "" -}}
 apiVersion: psmdb.percona.com/v1
 kind: PerconaServerMongoDB
 metadata:
@@ -61,7 +59,7 @@ spec:
       args:
         - --web.listen-address=:9216
         - --compatible-mode
-        - --mongodb.uri=mongodb://$(MONGODB_CLUSTER_MONITOR_USER):$(MONGODB_CLUSTER_MONITOR_PASSWORD)@127.0.0.1:27017/admin
+        - --mongodb.uri=mongodb://$(MONGODB_CLUSTER_MONITOR_USER):$(MONGODB_CLUSTER_MONITOR_PASSWORD)@127.0.0.1:27017/admin?authSource=admin&tls=true&tlsInsecure=true
       ports:
         - containerPort: 9216
           name: mongodb-metrics
