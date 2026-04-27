@@ -5,6 +5,16 @@ metadata:
   namespace: {{ .Release.Namespace }}
 {{- $ext := .Values.externalAccess | default dict }}
 {{- $conn := .Values.connectionHandling | default dict }}
+{{- $cluster := .Values.cluster | default dict }}
+{{- $clusterAffinity := $cluster.affinity | default dict }}
+{{- $clusterNodeSelector := $cluster.nodeSelector | default dict }}
+{{- $clusterTolerations := $cluster.tolerations | default list }}
+{{- $clusterExcludeHostnames := $cluster.excludeHostnames | default list }}
+{{- $haproxy := .Values.haproxy | default dict }}
+{{- $haproxyAffinity := $haproxy.affinity | default dict }}
+{{- $haproxyNodeSelector := $haproxy.nodeSelector | default dict }}
+{{- $haproxyTolerations := $haproxy.tolerations | default list }}
+{{- $haproxyExcludeHostnames := $haproxy.excludeHostnames | default list }}
 spec:
   crVersion: 1.14.0
 
@@ -45,6 +55,30 @@ spec:
 
     affinity:
       antiAffinityTopologyKey: kubernetes.io/hostname
+      {{- if or $clusterAffinity $clusterExcludeHostnames }}
+      advanced:
+        {{- with $clusterAffinity }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if $clusterExcludeHostnames }}
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: NotIn
+                    values:
+                      {{- toYaml $clusterExcludeHostnames | nindent 22 }}
+        {{- end }}
+      {{- end }}
+    {{- with $clusterNodeSelector }}
+    nodeSelector:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with $clusterTolerations }}
+    tolerations:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
 
     podDisruptionBudget:
       maxUnavailable: 1
@@ -104,6 +138,32 @@ spec:
     livenessDelaySec: 60
     livenessProbes:
       timeoutSeconds: 5
+    {{- end }}
+    affinity:
+      antiAffinityTopologyKey: kubernetes.io/hostname
+      {{- if or $haproxyAffinity $haproxyExcludeHostnames }}
+      advanced:
+        {{- with $haproxyAffinity }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if $haproxyExcludeHostnames }}
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: NotIn
+                    values:
+                      {{- toYaml $haproxyExcludeHostnames | nindent 22 }}
+        {{- end }}
+      {{- end }}
+    {{- with $haproxyNodeSelector }}
+    nodeSelector:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with $haproxyTolerations }}
+    tolerations:
+      {{- toYaml . | nindent 6 }}
     {{- end }}
 
   {{- if .Values.backup.enabled }}

@@ -499,11 +499,23 @@ mysql:
     readinessTimeoutSeconds: 15
     livenessDelaySeconds: 600
     livenessTimeoutSeconds: 15
+    # master01 does not have Longhorn CSI, so keep operator HAProxy off it.
+    excludeHostnames:
+      - master01
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
 
   cluster:
     # PXC instances are sized for quorum and anti-affinity across nodes.
     instances: 3
     image: percona/percona-xtradb-cluster:8.0
+    # master01 does not have Longhorn CSI, so keep PXC members off it.
+    excludeHostnames:
+      - master01
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
     probes:
       # Longhorn-backed initial bootstrap can take several minutes. Give the
       # first PXC node enough time to finish initializing before kubelet
