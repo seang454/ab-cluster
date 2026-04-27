@@ -1,0 +1,1 @@
+{"spec":{"pxc":{"readinessDelaySec":180,"readinessProbes":{"timeoutSeconds":20},"livenessDelaySec":1800,"livenessProbes":{"timeoutSeconds":20}},"haproxy":{"readinessDelaySec":120,"readinessProbes":{"timeoutSeconds":15},"livenessDelaySec":600,"livenessProbes":{"timeoutSeconds":15}}}}
