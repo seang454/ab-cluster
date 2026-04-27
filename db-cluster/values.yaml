@@ -183,7 +183,7 @@ postgresql:
 
   storage:
     # Persistent volume size for each PostgreSQL instance.
-    size: 10Gi
+    size: 4Gi
     storageClass: longhorn
     # WAL gets its own volume so write-ahead logs do not contend with main data.
     wal:
@@ -395,7 +395,7 @@ mongodb:
 
   storage:
     # Size of each MongoDB member's persistent volume.
-    size: 10Gi
+    size: 4Gi
     storageClass: longhorn
 
   backup:
@@ -520,7 +520,7 @@ mysql:
 
   storage:
     # Persistent volume size for the MySQL data directory.
-    size: 10Gi
+    size: 4Gi
     storageClass: longhorn
 
   backup:
@@ -745,7 +745,7 @@ cassandra:
 
   storage:
     # Persistent volume size for each Cassandra node.
-    size: 10Gi
+    size: 4Gi
     storageClass: longhorn
 
   backup:
