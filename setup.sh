@@ -102,6 +102,41 @@ retry() {
     return 1
 }
 
+ensure_all_nodes_schedulable() {
+    local nodes node unschedulable=0
+
+    mapfile -t nodes < <(kubectl get nodes -o name 2>/dev/null) || return 1
+    [ "${#nodes[@]}" -gt 0 ] || return 0
+
+    for node in "${nodes[@]}"; do
+        if kubectl get "$node" -o jsonpath='{.spec.unschedulable}' 2>/dev/null | grep -qx 'true'; then
+            unschedulable=1
+            break
+        fi
+    done
+
+    if [ "$unschedulable" -eq 0 ]; then
+        info "All nodes are already schedulable"
+        return 0
+    fi
+
+    info "Uncordoning nodes so reruns use the full cluster capacity..."
+    for node in "${nodes[@]}"; do
+        kubectl uncordon "${node#node/}" >/dev/null 2>&1 || true
+    done
+
+    local remaining=0
+    for node in "${nodes[@]}"; do
+        if kubectl get "$node" -o jsonpath='{.spec.unschedulable}' 2>/dev/null | grep -qx 'true'; then
+            info "Node still unschedulable after uncordon: ${node#node/}"
+            remaining=1
+        fi
+    done
+
+    [ "$remaining" -eq 0 ] || die "Some nodes are still unschedulable after uncordon"
+    ok "All nodes schedulable"
+}
+
 wait_for_externalsecret_stable() {
     local namespace="$1"
     local name="$2"
@@ -296,6 +331,8 @@ def mem_to_mib(value):
 eligible = {}
 for item in nodes["items"]:
     name = item["metadata"]["name"]
+    if item.get("spec", {}).get("unschedulable", False):
+        continue
     taints = item.get("spec", {}).get("taints", []) or []
     if taints:
         continue
@@ -697,6 +734,8 @@ for profile_path in profile_paths:
 eligible = {}
 for item in nodes["items"]:
     name = item["metadata"]["name"]
+    if item.get("spec", {}).get("unschedulable", False):
+        continue
     taints = item.get("spec", {}).get("taints", []) or []
     if taints:
         continue
@@ -1910,6 +1949,7 @@ setup() {
     echo "============================================="
 
     require_real_passwords
+    ensure_all_nodes_schedulable || die "Failed to make all nodes schedulable"
     preflight       || die "Step preflight failed"
     repos           || die "Step repos failed"
     ingress_nginx   || die "Step ingress_nginx failed"
