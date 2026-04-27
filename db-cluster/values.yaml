@@ -524,8 +524,7 @@ mysql:
     storageClass: longhorn
 
   backup:
-    # PXC backups use the namespace as the bucket and store backups under
-    # <release>/<cluster>.
+    # PXC backups use the namespace as the bucket.
     enabled: true
     schedule:
       name: daily-backup
@@ -536,8 +535,8 @@ mysql:
       region: us-east-1
       credentialSecret: ""
       endpointURL: "http://my-minio-minio.storage.svc:9000"
-      prefix: "{{ .Release.Name }}/{{ include \"mysql.fullname\" . }}"
-
+      # The PXC webhook rejects the unsupported `prefix` field, so keep it blank.
+      prefix: ""
   alerts:
     enabled: true
     prometheusRuleLabels:
