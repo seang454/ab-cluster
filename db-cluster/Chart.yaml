@@ -3,8 +3,8 @@ name: db-cluster
 description: >
   Database application chart for PostgreSQL, MongoDB, MySQL, Redis, and Cassandra.
   Bootstrap infrastructure is managed separately from this app release.
-version: 4.0.2
-appVersion: "4.0.2"
+version: 4.0.3
+appVersion: "4.0.3"
 home: https://github.com/seang454/db-cluster
 maintainers:
 - name: seang454
