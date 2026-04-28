@@ -516,7 +516,6 @@ mysql:
     configuration: |
       [mysqld]
       admin-port=33062
-      extra_max_connections=100
     # master01 does not have Longhorn CSI, so keep PXC members off it.
     excludeHostnames:
       - master01
