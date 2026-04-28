@@ -52,7 +52,13 @@ externalTcpProxy:
     kubernetes.io/hostname: node2
   tolerations: []
   affinity: {}
-  resources: {}
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "250m"
+      memory: "256Mi"
   service:
     enabled: false
     type: ClusterIP
@@ -499,6 +505,13 @@ mysql:
     readinessTimeoutSeconds: 15
     livenessDelaySeconds: 600
     livenessTimeoutSeconds: 15
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "250m"
+        memory: "256Mi"
     # master01 does not have Longhorn CSI, so keep operator HAProxy off it.
     excludeHostnames:
       - master01
@@ -573,6 +586,13 @@ mysql:
     exporter:
       enabled: true
       image: prom/mysqld-exporter:v0.19.0
+      resources:
+        requests:
+          cpu: "100m"
+          memory: "128Mi"
+        limits:
+          cpu: "250m"
+          memory: "256Mi"
     podMonitor:
       enabled: true
       interval: 30s

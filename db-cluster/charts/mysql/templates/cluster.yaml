@@ -48,6 +48,10 @@ spec:
               secretKeyRef:
                 name: {{ include "mysql.secretName" . }}
                 key: monitor
+        {{- with .Values.monitoring.exporter.resources }}
+        resources:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
     {{- with .Values.cluster.probes }}
     readinessDelaySec: {{ .readinessDelaySeconds | default 60 }}
     readinessProbes:
@@ -133,6 +137,10 @@ spec:
     livenessDelaySec: {{ .livenessDelaySeconds | default 60 }}
     livenessProbes:
       timeoutSeconds: {{ .livenessTimeoutSeconds | default 5 }}
+    {{- with .resources }}
+    resources:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
     {{- else }}
     size: 1
     image: percona/percona-xtradb-cluster-operator:1.14.0-haproxy
