@@ -49,7 +49,7 @@ externalTcpProxy:
   # Pin the public TCP proxy to the same node your external DNS record points to.
   # Public database hostnames should resolve to worker03's public IP.
   nodeSelector:
-    kubernetes.io/hostname: worker03
+    kubernetes.io/hostname: node2
   tolerations: []
   affinity: {}
   resources: {}
@@ -510,6 +510,13 @@ mysql:
     # PXC instances are sized for quorum and anti-affinity across nodes.
     instances: 3
     image: percona/percona-xtradb-cluster:8.0
+    # HAProxy health checks connect to the MySQL admin interface on 33062.
+    # Percona 8.0.45 exposes this through admin-port rather than the older
+    # extra_port setting, so render it explicitly in the operator config.
+    configuration: |
+      [mysqld]
+      admin-port=33062
+      extra_max_connections=100
     # master01 does not have Longhorn CSI, so keep PXC members off it.
     excludeHostnames:
       - master01
