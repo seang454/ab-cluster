@@ -526,10 +526,10 @@ mysql:
       livenessTimeoutSeconds: 20
     resources:
       requests:
-        cpu: "500m"
+        cpu: "250m"
         memory: "512Mi"
       limits:
-        cpu: "1500m"
+        cpu: "1000m"
         memory: "2Gi"
 
   storage:
