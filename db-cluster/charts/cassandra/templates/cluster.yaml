@@ -78,6 +78,7 @@ spec:
           cpu: {{ .Values.cluster.systemLoggerResources.requests.cpu }}
           memory: {{ .Values.cluster.systemLoggerResources.requests.memory }}
         limits:
+          cpu: {{ .Values.cluster.systemLoggerResources.limits.cpu }}
           memory: {{ .Values.cluster.systemLoggerResources.limits.memory }}
 
       storageConfig:

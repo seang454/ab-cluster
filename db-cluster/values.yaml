@@ -165,11 +165,11 @@ postgresql:
 
     resources:
       requests:
-        cpu: "250m"
+        cpu: "200m"
         memory: "512Mi"
       limits:
-        cpu: "1500m"
-        memory: "2Gi"
+        cpu: "500m"
+        memory: "1Gi"
 
     podAntiAffinityType: preferred
     whenUnsatisfiable: DoNotSchedule
@@ -236,12 +236,12 @@ postgresql:
 
   # Optional PgBouncer layer in front of the primary/read-only service.
   pooler:
-    enabled: true
+    enabled: false
     # Keep a distinct name so the Pooler service cannot be confused with the
     # cluster's built-in -rw service.
     name: pooler-rw
     type: rw
-    instances: 2
+    instances: 3
     pgbouncer:
       poolMode: transaction
       parameters:
@@ -393,11 +393,11 @@ mongodb:
       readinessFailureThreshold: 30
     resources:
       requests:
-        cpu: "200m"
-        memory: "1Gi"
+        cpu: "250m"
+        memory: "512Mi"
       limits:
-        cpu: "1000m"
-        memory: "2Gi"
+        cpu: "500m"
+        memory: "1Gi"
 
   storage:
     # Size of each MongoDB member's persistent volume.
@@ -498,7 +498,7 @@ mysql:
     enabled: true
     # The Percona operator enforces at least two HAProxy replicas as a safe
     # default. Match that here to avoid endless reconciliation churn.
-    size: 2
+    size: 1
     # Longhorn-backed first-node bootstrap is slow, so let HAProxy wait for a
     # real backend instead of restarting while PXC is still initializing.
     readinessDelaySeconds: 120
@@ -548,8 +548,8 @@ mysql:
         cpu: "250m"
         memory: "512Mi"
       limits:
-        cpu: "1000m"
-        memory: "2Gi"
+        cpu: "500m"
+        memory: "1Gi"
 
   storage:
     # Persistent volume size for the MySQL data directory.
@@ -588,11 +588,11 @@ mysql:
       image: prom/mysqld-exporter:v0.19.0
       resources:
         requests:
+          cpu: "50m"
+          memory: "64Mi"
+        limits:
           cpu: "100m"
           memory: "128Mi"
-        limits:
-          cpu: "250m"
-          memory: "256Mi"
     podMonitor:
       enabled: true
       interval: 30s
@@ -657,8 +657,8 @@ redis:
         cpu: "100m"
         memory: "128Mi"
       limits:
-        cpu: "500m"
-        memory: "1Gi"
+        cpu: "250m"
+        memory: "512Mi"
 
   storage:
     # Smaller volume than the SQL databases because Redis data is usually lighter.
@@ -685,11 +685,11 @@ redis:
 
   exporter:
     # Redis metrics are exposed through the operator's native redis-exporter.
-    enabled: true
+    enabled: false
     image: quay.io/opstree/redis-exporter:v1.44.0
 
   monitoring:
-    enabled: true
+    enabled: false
     serviceMonitor:
       enabled: true
       interval: 30s
@@ -763,23 +763,24 @@ cassandra:
       datacenter: dc1
     resources:
       requests:
-        cpu: "200m"
-        memory: "1Gi"
-      limits:
-        cpu: "1"
-        memory: "3Gi"
-    configBuilderResources:
-      requests:
-        cpu: "100m"
-        memory: "128Mi"
+        cpu: "250m"
+        memory: "512Mi"
       limits:
         cpu: "500m"
-        memory: "384Mi"
+        memory: "1Gi"
+    configBuilderResources:
+      requests:
+        cpu: "50m"
+        memory: "64Mi"
+      limits:
+        cpu: "100m"
+        memory: "128Mi"
     systemLoggerResources:
       requests:
         cpu: "20m"
         memory: "64Mi"
       limits:
+        cpu: "50m"
         memory: "128Mi"
 
   storage:
@@ -818,7 +819,7 @@ cassandra:
       for: 10m
 
   monitoring:
-    enabled: true
+    enabled: false
     prometheus:
       enabled: true
       commonLabels:
