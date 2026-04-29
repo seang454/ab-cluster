@@ -75,13 +75,19 @@ externalTcpProxy:
     redis: true
     cassandra: true
   ports:
-    # Native database ports preserved so clients can connect without port translation.
-    postgresql: 5432
-    mysql: 3306
-    mongodb: 27017
-    redis: 6379
-    # Cassandra uses the standard 9042 port through HAProxy.
-    cassandra: 9042
+    # Default external ports are shifted into a high, user-friendly range so
+    # many clusters can coexist without fighting over the same node port.
+    # Recommended user override ranges:
+    # postgresql: 15432-15999
+    # mysql:      13306-13999
+    # mongodb:    17017-17999
+    # redis:      16379-16999
+    # cassandra:  19042-19999
+    postgresql: 15432
+    mysql: 13306
+    mongodb: 17017
+    redis: 16379
+    cassandra: 19042
   postgresql:
     # Leave empty to derive the backend dynamically as:
     # <release>-postgresql-rw
