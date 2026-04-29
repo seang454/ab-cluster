@@ -65,8 +65,8 @@ externalTcpProxy:
   # Public DNS zone used by your external database hostnames.
   clusterDomain: seang.shop
   # Kubernetes service DNS suffix used for internal HAProxy backends.
-  # This cluster uses the `k8scluster` DNS suffix for internal service names.
-  kubeClusterDomain: k8scluster
+  # This cluster uses the `benzcluster` DNS suffix for internal service names.
+  kubeClusterDomain: benzcluster
   expose:
     # Enable only the database ports you actually want HAProxy to publish.
     postgresql: true
@@ -296,7 +296,7 @@ mongodb:
   enabled: false
   # Match the actual Kubernetes service DNS suffix used by this cluster so
   # MongoDB member cert SANs and replica set hostnames resolve to the same name.
-  clusterServiceDNSSuffix: k8scluster
+  clusterServiceDNSSuffix: benzcluster
   clusterServiceDNSMode: Internal
   # MongoDB connection handling stays driver/operator-native. Use replica set
   # services internally and split horizons when external member endpoints are
