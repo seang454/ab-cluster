@@ -1,5 +1,5 @@
 externalTcpProxy:
-  kubeClusterDomain: k8scluster
+  kubeClusterDomain: benzcluster
 
 mongodb:
   enabled: true
@@ -7,7 +7,7 @@ mongodb:
     enabled: false
   unsafeFlags:
     replsetSize: true
-  clusterServiceDNSSuffix: k8scluster
+  clusterServiceDNSSuffix: benzcluster
   externalAccess:
     enabled: false
     replicaSetHorizons:
