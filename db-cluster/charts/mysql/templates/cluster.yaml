@@ -180,7 +180,7 @@ spec:
 
   {{- if .Values.backup.enabled }}
   backup:
-    image: percona/percona-xtradb-cluster-operator:1.14.0-pxc8.0-backup
+    image: {{ .Values.backup.image | default "percona/percona-xtradb-cluster-operator:1.14.0-pxc8.0-backup-pxb8.0.35" | quote }}
     storages:
       s3-storage:
         type: s3

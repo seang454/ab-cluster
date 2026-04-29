@@ -565,6 +565,7 @@ mysql:
   backup:
     # PXC backups use the namespace as the bucket.
     enabled: true
+    image: percona/percona-xtradb-cluster-operator:1.14.0-pxc8.0-backup-pxb8.0.35
     schedule:
       name: daily-backup
       cron: "20 2 * * *"
