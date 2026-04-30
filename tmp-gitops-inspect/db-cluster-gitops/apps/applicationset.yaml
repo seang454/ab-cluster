@@ -1,0 +1,41 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: user-db-clusters
+  namespace: argocd
+spec:
+  generators:
+    - git:
+        repoURL: https://github.com/seang454/db-cluster-gitops.git
+        revision: main
+        directories:
+          - path: db-cluster/users/*
+
+  template:
+    metadata:
+      name: '{{path.basename}}-db-cluster'
+    spec:
+      project: default
+
+      sources:
+        - repoURL: https://github.com/seang454/db-cluster-gitops.git
+          targetRevision: main
+          ref: uservalues
+
+        - repoURL: https://github.com/seang454/ab-cluster.git
+          targetRevision: master
+          path: db-cluster
+          helm:
+            valueFiles:
+              - $uservalues/db-cluster/users/{{path.basename}}/values.yaml
+
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{path.basename}}'
+
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true

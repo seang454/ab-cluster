@@ -1,0 +1,65 @@
+# ============================================================
+# John's db-cluster values
+# Managed by: Spring Boot (auto-provisioning)
+# Namespace:  john
+# ============================================================
+
+externalTcpProxy:
+  clusterDomain: seang.shop
+  kubeClusterDomain: benzcluster
+  expose:
+    postgresql: true
+    redis: true
+  ports:
+    postgresql: 15432
+    redis: 16379
+
+postgresql:
+  enabled: true
+  cluster:
+    instances: 2
+    imageName: ghcr.io/cloudnative-pg/postgresql:16.2
+    bootstrap:
+      database: john_db
+      owner: john
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "512Mi"
+      limits:
+        cpu: "500m"
+        memory: "1Gi"
+  storage:
+    size: 10Gi
+    storageClass: longhorn
+  backup:
+    enabled: true
+    s3Credentials:
+      accessKeyId:
+        secretName: minio-credentials
+        key: root-user
+      secretAccessKey:
+        secretName: minio-credentials
+        key: root-password
+
+redis:
+  enabled: true
+  cluster:
+    instances: 3
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "250m"
+        memory: "512Mi"
+  storage:
+    size: 5Gi
+    storageClass: longhorn
+
+mongodb:
+  enabled: false
+mysql:
+  enabled: false
+cassandra:
+  enabled: false

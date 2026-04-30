@@ -1,0 +1,37 @@
+# ============================================================
+# Jane's db-cluster values
+# Managed by: Spring Boot (auto-provisioning)
+# Namespace:  jane
+# ============================================================
+
+externalTcpProxy:
+  clusterDomain: seang.shop
+  kubeClusterDomain: benzcluster
+  expose:
+    mongodb: true
+  ports:
+    mongodb: 27017
+
+mongodb:
+  enabled: true
+  cluster:
+    instances: 3
+    resources:
+      requests:
+        cpu: "200m"
+        memory: "512Mi"
+      limits:
+        cpu: "500m"
+        memory: "1Gi"
+  storage:
+    size: 10Gi
+    storageClass: longhorn
+
+postgresql:
+  enabled: false
+mysql:
+  enabled: false
+redis:
+  enabled: false
+cassandra:
+  enabled: false
