@@ -7,7 +7,7 @@ mongodb:
     enabled: false
   unsafeFlags:
     replsetSize: true
-  clusterServiceDNSSuffix: benzcluster
+  clusterServiceDNSSuffix: k8scluster
   externalAccess:
     enabled: false
     replicaSetHorizons:

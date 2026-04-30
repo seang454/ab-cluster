@@ -294,9 +294,10 @@ mongodb:
   # MongoDB keeps its own operator-native backup task flow and direct/service-based
   # connection handling instead of a PostgreSQL Pooler CRD.
   enabled: false
-  # Match the actual Kubernetes service DNS suffix used by this cluster so
-  # MongoDB member cert SANs and replica set hostnames resolve to the same name.
-  clusterServiceDNSSuffix: benzcluster
+  # MongoDB replica-set self-identification must match the kubelet-managed pod
+  # FQDN domain. In this cluster that domain is `k8scluster`, even though some
+  # other components also resolve `benzcluster`.
+  clusterServiceDNSSuffix: k8scluster
   clusterServiceDNSMode: Internal
   # MongoDB connection handling stays driver/operator-native. Use replica set
   # services internally and split horizons when external member endpoints are
