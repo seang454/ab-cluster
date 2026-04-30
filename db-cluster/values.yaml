@@ -6,6 +6,11 @@
 # This file tunes cluster-wide behavior: ingress, DNS, database exposure,
 # and each database subchart's defaults.
 
+global:
+  # Optional identity key for one logical database cluster. When set, all
+  # database backup paths use this folder inside the namespace bucket.
+  clusterIdentity: ""
+
 # =============================================================================
 # GENERIC INGRESS
 # =============================================================================
@@ -208,7 +213,7 @@ postgresql:
     enabled: true
     # Supported providers in this chart: s3, gcs
     provider: s3
-    destinationPath: "s3://{{ .Release.Namespace }}/{{ .Release.Name }}/{{ include \"postgresql.fullname\" . }}"
+    destinationPath: "s3://{{ .Release.Namespace }}/{{ default (printf \"%s/%s\" .Release.Name (include \"postgresql.fullname\" .)) .Values.global.clusterIdentity }}"
     # Use endpointURL for S3-compatible targets such as MinIO.
     endpointURL: "http://my-minio-minio.storage.svc:9000"
     # Optional CA bundle secret for private/self-signed HTTPS endpoints.
@@ -427,7 +432,7 @@ mongodb:
       region: us-east-1
       credentialSecret: ""
       endpointURL: "http://my-minio-minio.storage.svc:9000"
-      prefix: "{{ .Release.Name }}/{{ include \"mongodb.fullname\" . }}"
+      prefix: "{{ default (printf \"%s/%s\" .Release.Name (include \"mongodb.fullname\" .)) .Values.global.clusterIdentity }}"
 
   alerts:
     enabled: true
@@ -576,8 +581,7 @@ mysql:
       region: us-east-1
       credentialSecret: ""
       endpointURL: "http://my-minio-minio.storage.svc:9000"
-      # The PXC webhook rejects the unsupported `prefix` field, so keep it blank.
-      prefix: ""
+      prefix: "{{ default .Release.Name .Values.global.clusterIdentity }}"
   alerts:
     enabled: true
     prometheusRuleLabels:
@@ -689,7 +693,7 @@ redis:
       accessKeyKey: root-user
       secretKeyKey: root-password
       endpointURL: "http://my-minio-minio.storage.svc:9000"
-      prefix: "{{ .Release.Name }}/{{ include \"redis.fullname\" . }}"
+      prefix: "{{ default (printf \"%s/%s\" .Release.Name (include \"redis.fullname\" .)) .Values.global.clusterIdentity }}"
 
   exporter:
     # Redis metrics are exposed through the operator's native redis-exporter.
@@ -811,7 +815,7 @@ cassandra:
       bucket: "{{ .Release.Namespace }}"
       region: us-east-1
       credentialSecret: ""
-      prefix: "{{ .Release.Name }}/{{ include \"cassandra.fullname\" . }}"
+      prefix: "{{ default (printf \"%s/%s\" .Release.Name (include \"cassandra.fullname\" .)) .Values.global.clusterIdentity }}"
       host: my-minio-minio.storage.svc
       port: 9000
       secure: false
