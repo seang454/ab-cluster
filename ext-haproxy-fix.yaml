@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: seang-mysql-80f66a6d-external-haproxy
+  namespace: ns-seang-03
+data:
+  haproxy.cfg: |
+    global
+      log stdout format raw local0
+
+    defaults
+      log global
+      mode tcp
+      option tcplog
+      timeout connect 10s
+      timeout client 1m
+      timeout server 1m
+
+    resolvers kube_dns
+      parse-resolv-conf
+      accepted_payload_size 8192
+      hold valid 10s
+
+    frontend mysql_frontend
+      bind *:13306
+      default_backend mysql_backend
+
+    backend mysql_backend
+      server mysql seang-mysql-80f66a6d-haproxy.ns-seang-03.svc.benzcluster:3306 check resolvers kube_dns init-addr none

@@ -73,7 +73,7 @@ data:
       default_backend mysql_backend
 
     backend mysql_backend
-      server mysql {{ .Release.Name }}-mysql-haproxy.{{ .Release.Namespace }}.{{ $svcSuffix }}:3306 check resolvers kube_dns init-addr none
+      server mysql {{ include "mysql.fullname" . }}-haproxy.{{ .Release.Namespace }}.{{ $svcSuffix }}:3306 check resolvers kube_dns init-addr none
     {{ end }}
 
     {{- if $mongoHorizonsEnabled }}

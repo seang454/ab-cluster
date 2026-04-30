@@ -1,5 +1,10 @@
 {{- define "mysql.fullname" -}}
-{{- printf "%s-mysql" .Release.Name | trunc 63 | trimSuffix "-" -}}
+{{- $releaseName := .Release.Name | lower -}}
+{{- if le (len $releaseName) 22 -}}
+{{- $releaseName | trimSuffix "-" -}}
+{{- else -}}
+{{- printf "%s-%s" ($releaseName | trunc 13 | trimSuffix "-") ($releaseName | sha256sum | trunc 8) | trunc 22 | trimSuffix "-" -}}
+{{- end -}}
 {{- end -}}
 
 {{- define "mysql.secretName" -}}
