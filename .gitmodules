@@ -1,0 +1,3 @@
+[submodule "dns-kubernete-argocd"]
+	path = dns-kubernete-argocd
+	url = https://github.com/seang454/dns-kubernete-argocd.git
