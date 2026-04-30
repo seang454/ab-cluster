@@ -1,0 +1,3 @@
+[submodule "db-cluster/dns-kubernete-argocd"]
+	path = db-cluster/dns-kubernete-argocd
+	url = https://github.com/seang454/dns-kubernete-argocd.git
