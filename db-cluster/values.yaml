@@ -538,9 +538,12 @@ mysql:
     # HAProxy health checks connect to the MySQL admin interface on 33062.
     # Percona 8.0.45 exposes this through admin-port rather than the older
     # extra_port setting, so render it explicitly in the operator config.
+    # The init_file re-applies the probe-user grants on every startup so the
+    # operator's monitor user can pass admin-port health checks reliably.
     configuration: |
       [mysqld]
       admin-port=33062
+      init_file=/etc/mysql/init-file/init-users.sql
     # master01 does not have Longhorn CSI, so keep PXC members off it.
     excludeHostnames:
       - master01
