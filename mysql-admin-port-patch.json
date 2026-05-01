@@ -1,1 +1,0 @@
-{"spec":{"pxc":{"configuration":"[mysqld]\nadmin-port=33062\nextra_max_connections=100\n"}}}

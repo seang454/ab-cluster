@@ -1,6 +1,0 @@
-externalTcpProxy:
-  clusterDomain: k8scluster
-  postgresql:
-    backendAddress: 10.233.45.77
-  nodeSelector:
-    kubernetes.io/hostname: worker03

@@ -1,3 +1,0 @@
-externalTcpProxy:
-  nodeSelector:
-    kubernetes.io/hostname: worker01
