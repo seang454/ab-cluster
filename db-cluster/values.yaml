@@ -513,9 +513,9 @@ mysql:
     size: 1
     # Longhorn-backed first-node bootstrap is slow, so let HAProxy wait for a
     # real backend instead of restarting while PXC is still initializing.
-    readinessDelaySeconds: 120
+    readinessDelaySeconds: 300
     readinessTimeoutSeconds: 15
-    livenessDelaySeconds: 600
+    livenessDelaySeconds: 1800
     livenessTimeoutSeconds: 15
     resources:
       requests:
@@ -554,7 +554,7 @@ mysql:
       # Longhorn-backed initial bootstrap can take several minutes. Give the
       # first PXC node enough time to finish initializing before kubelet
       # liveness checks kill it and force a full restart.
-      readinessDelaySeconds: 180
+      readinessDelaySeconds: 300
       readinessTimeoutSeconds: 20
       livenessDelaySeconds: 1800
       livenessTimeoutSeconds: 20
