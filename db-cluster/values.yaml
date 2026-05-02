@@ -121,9 +121,10 @@ postgresql:
     admin: ""
     standby: ""
   externalAccess:
-    # LoadBalancer mode is kept for clusters that want direct public exposure.
-    enabled: true
-    serviceType: LoadBalancer
+    # This platform exposes PostgreSQL through the shared external HAProxy, not
+    # a cloud LoadBalancer service.
+    enabled: false
+    serviceType: ClusterIP
     serviceName: ""
     externalIP: ""
     externalIPs: []
