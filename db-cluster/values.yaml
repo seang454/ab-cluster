@@ -642,7 +642,7 @@ redis:
     publicHostnames:
       - redis-db.seang.shop
   tls:
-    enabled: false
+    enabled: true
     secretName: ""
     caKey: ca.crt
     certKey: tls.crt
