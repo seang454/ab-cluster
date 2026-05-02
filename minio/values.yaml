@@ -26,6 +26,13 @@ service:
   consolePort: 9001
   annotations: {}
 
+issuer:
+  enabled: true
+  name: letsencrypt-prod
+  server: https://acme-v02.api.letsencrypt.org/directory
+  email: admin@seang.shop
+  ingressClass: nginx
+
 ingress:
   enabled: true
   className: nginx
