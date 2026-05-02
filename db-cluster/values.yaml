@@ -54,7 +54,7 @@ externalTcpProxy:
   # Pin the public TCP proxy to the node your external DNS points to.
   # Update this hostname if your public database records target a different node.
   nodeSelector:
-    kubernetes.io/hostname: worker03
+    kubernetes.io/hostname: node1
   tolerations: []
   affinity: {}
   resources:
