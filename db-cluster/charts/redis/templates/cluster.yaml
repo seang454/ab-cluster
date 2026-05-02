@@ -115,6 +115,15 @@ spec:
 
   storage:
     nodeConfVolume: {{ .Values.storage.nodeConfVolume }}
+    {{- if .Values.storage.nodeConfVolume }}
+    nodeConfVolumeClaimTemplate:
+      spec:
+        storageClassName: {{ .Values.storage.nodeConfStorageClass | default .Values.storage.storageClass }}
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ .Values.storage.nodeConfSize }}
+    {{- end }}
     volumeClaimTemplate:
       spec:
         storageClassName: {{ .Values.storage.storageClass }}

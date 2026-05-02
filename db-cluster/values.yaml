@@ -682,6 +682,8 @@ redis:
   storage:
     # Redis cluster mode needs a writable node-conf volume for nodes.conf.
     nodeConfVolume: true
+    nodeConfSize: 1Gi
+    nodeConfStorageClass: longhorn
     # Smaller volume than the SQL databases because Redis data is usually lighter.
     size: 5Gi
     storageClass: longhorn
