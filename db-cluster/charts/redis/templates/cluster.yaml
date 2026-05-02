@@ -114,6 +114,7 @@ spec:
       key: password
 
   storage:
+    nodeConfVolume: {{ .Values.storage.nodeConfVolume }}
     volumeClaimTemplate:
       spec:
         storageClassName: {{ .Values.storage.storageClass }}
