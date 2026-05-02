@@ -532,8 +532,11 @@ mysql:
     affinity: {}
 
   cluster:
-    # PXC instances are sized for quorum and anti-affinity across nodes.
-    instances: 3
+    # Bootstrap MySQL/PXC conservatively at one node by default. Fresh
+    # three-node cluster formation has been unstable in this environment, while
+    # single-node bootstrap is much more reliable. Scale this to 3 only after
+    # the first node becomes healthy.
+    instances: 1
     image: percona/percona-xtradb-cluster:8.0
     # HAProxy health checks connect to the MySQL admin interface on 33062.
     # Percona 8.0.45 exposes this through admin-port rather than the older
@@ -755,7 +758,15 @@ cassandra:
     # The subchart generates the JKS secrets automatically during Helm install/upgrade.
     createSecrets: true
     # When Cassandra is disabled, the next upgrade removes the datacenter and PVCs.
+    # Keep the cleanup logic itself available, but require an explicit opt-in so
+    # MySQL/PostgreSQL/MongoDB releases do not run Cassandra cleanup jobs just
+    # because Cassandra is disabled in the umbrella chart.
     cleanupOnDisable: true
+  cleanup:
+    # Explicitly opt in only when intentionally tearing down a Cassandra
+    # release. Leaving this false prevents stray cleanup jobs during unrelated
+    # database deploys.
+    enabled: false
     serverSecretName: cassandra-server-keystore-secret
     clientSecretName: cassandra-client-trust-secret
     # SECURITY FIX: Removed hardcoded passwords. These MUST be provided via Vault/ExternalSecret
