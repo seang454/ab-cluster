@@ -1,0 +1,7 @@
+[
+  {
+    "op": "replace",
+    "path": "/spec/cassandra/datacenters/0/size",
+    "value": 1
+  }
+]

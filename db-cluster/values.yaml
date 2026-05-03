@@ -782,11 +782,16 @@ cassandra:
     # database deploys.
     enabled: false
   cluster:
-    # Cassandra needs memory-heavy config-builder and logger sidecars to stay healthy.
-    instances: 3
+    # Start conservatively at one node in this environment. K8ssandra adds
+    # multiple helper containers, and single-node bootstrap is much more
+    # reliable on the current cluster than a fresh three-node formation.
+    instances: 1
     image: k8ssandra/cass-management-api:4.1.3
     config:
-      clusterName: seang-cassandra
+      # Leave blank to derive a unique K8ssandra cluster name from the Helm
+      # release. This prevents different Cassandra releases from colliding on
+      # the same generated StatefulSet, Service, and PVC names.
+      clusterName: ""
       datacenter: dc1
     resources:
       requests:
