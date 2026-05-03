@@ -136,8 +136,25 @@ spec:
             -storepass "$client_trust_pass" \
             -noprompt
 
-          cp /work/server-keystore.jks /work/client-keystore.jks
-          cp /work/client-truststore.jks /work/server-truststore.jks
+          # Re-encode the copied stores with their own target passwords so the
+          # secret metadata always matches the actual keystore/truststore files.
+          keytool -importkeystore \
+            -srckeystore /work/server-keystore.jks \
+            -srcstorepass "$server_pass" \
+            -srckeypass "$server_pass" \
+            -srcalias cassandra \
+            -destalias cassandra \
+            -destkeystore /work/client-keystore.jks \
+            -deststorepass "$client_pass" \
+            -destkeypass "$client_pass" \
+            -noprompt
+
+          keytool -importkeystore \
+            -srckeystore /work/client-truststore.jks \
+            -srcstorepass "$client_trust_pass" \
+            -destkeystore /work/server-truststore.jks \
+            -deststorepass "$server_trust_pass" \
+            -noprompt
         env:
         - name: CASSANDRA_PUBLIC_HOST
           value: {{ $publicHost | quote }}

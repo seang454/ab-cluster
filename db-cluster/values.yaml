@@ -792,13 +792,30 @@ cassandra:
       # the same generated StatefulSet, Service, PVC, and CassandraDatacenter names.
       clusterName: ""
       datacenter: ""
+      # Cap the Cassandra JVM heap explicitly so the process leaves enough
+      # headroom for native memory, TLS, off-heap usage, and the management API.
+      jvmOptions:
+        heap_initial_size: "1024M"
+        heap_max_size: "1536M"
     resources:
       requests:
         cpu: "500m"
-        memory: "1536Mi"
+        memory: "2Gi"
       limits:
         cpu: "1500m"
-        memory: "3Gi"
+        memory: "4Gi"
+    probes:
+      # Cassandra first-node startup is slow with TLS, Medusa, and Longhorn.
+      # Keep readiness fairly chatty, but delay liveness long enough that
+      # kubelet does not kill the pod before the node finishes bootstrapping.
+      readinessInitialDelaySeconds: 30
+      readinessTimeoutSeconds: 10
+      readinessPeriodSeconds: 10
+      readinessFailureThreshold: 60
+      livenessInitialDelaySeconds: 180
+      livenessTimeoutSeconds: 10
+      livenessPeriodSeconds: 15
+      livenessFailureThreshold: 12
     configBuilderResources:
       requests:
         cpu: "100m"

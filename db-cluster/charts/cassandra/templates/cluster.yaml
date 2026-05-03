@@ -6,6 +6,8 @@ metadata:
 {{- $tls := .Values.tls | default dict }}
 {{- $monitoring := .Values.monitoring | default dict }}
 {{- $prometheus := get $monitoring "prometheus" | default dict }}
+{{- $clusterConfig := .Values.cluster.config | default dict }}
+{{- $jvmOptions := get $clusterConfig "jvmOptions" | default dict }}
 {{- $targetInstances := int (default 1 .Values.cluster.instances) }}
 {{- $bootstrapInstances := ternary 1 $targetInstances (gt $targetInstances 1) }}
 spec:
@@ -36,8 +38,18 @@ spec:
           {{- toYaml . | nindent 10 }}
         {{- end }}
     {{- end }}
-    {{- if $tls.enabled }}
+    {{- if or $tls.enabled (gt (len $jvmOptions) 0) }}
     config:
+      {{- if gt (len $jvmOptions) 0 }}
+      jvmOptions:
+        {{- with (get $jvmOptions "heap_initial_size") }}
+        heap_initial_size: {{ . | quote }}
+        {{- end }}
+        {{- with (get $jvmOptions "heap_max_size") }}
+        heap_max_size: {{ . | quote }}
+        {{- end }}
+      {{- end }}
+      {{- if $tls.enabled }}
       cassandraYaml:
         server_encryption_options:
           internode_encryption: {{ get $tls "internodeEncryption" | default "all" | quote }}
@@ -45,6 +57,7 @@ spec:
         client_encryption_options:
           enabled: {{ dig "clientEncryption" true $tls }}
           require_client_auth: {{ dig "requireClientAuth" true $tls }}
+      {{- end }}
     serverEncryptionStores:
       keystoreSecretRef:
         name: {{ include "cassandra.serverSecretName" . }}
@@ -64,6 +77,26 @@ spec:
     - metadata:
         name: {{ include "cassandra.datacenter" . }}
       size: {{ $bootstrapInstances }}
+      containers:
+      - name: cassandra
+        livenessProbe:
+          httpGet:
+            path: /api/v0/probes/liveness
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: {{ .Values.cluster.probes.livenessInitialDelaySeconds }}
+          periodSeconds: {{ .Values.cluster.probes.livenessPeriodSeconds }}
+          timeoutSeconds: {{ .Values.cluster.probes.livenessTimeoutSeconds }}
+          failureThreshold: {{ .Values.cluster.probes.livenessFailureThreshold }}
+        readinessProbe:
+          httpGet:
+            path: /api/v0/probes/readiness
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: {{ .Values.cluster.probes.readinessInitialDelaySeconds }}
+          periodSeconds: {{ .Values.cluster.probes.readinessPeriodSeconds }}
+          timeoutSeconds: {{ .Values.cluster.probes.readinessTimeoutSeconds }}
+          failureThreshold: {{ .Values.cluster.probes.readinessFailureThreshold }}
 
       affinity:
         podAntiAffinity:
