@@ -91,6 +91,31 @@ resolve_operator_namespace() {
     printf '%s\n' "$target_namespace"
 }
 
+deployment_env_value() {
+    local namespace="$1"
+    local deployment="$2"
+    local env_name="$3"
+
+    kubectl get deployment "$deployment" -n "$namespace" \
+        -o jsonpath="{range .spec.template.spec.containers[*].env[?(@.name=='$env_name')]}{.value}{end}" \
+        2>/dev/null || true
+}
+
+ensure_k8ssandra_cluster_wide() {
+    local namespace="$1"
+    local watch_namespace
+
+    watch_namespace="$(deployment_env_value "$namespace" k8ssandra-operator WATCH_NAMESPACE)"
+    if [ -n "$watch_namespace" ]; then
+        die "K8ssandra operator is still namespace-scoped (WATCH_NAMESPACE=$watch_namespace). Run ./setup.sh install_operators to apply the cluster-wide watch fix before deploying Cassandra."
+    fi
+
+    kubectl get clusterrole k8ssandra-operator-global >/dev/null 2>&1 \
+        || die "Missing ClusterRole k8ssandra-operator-global. Run ./setup.sh install_operators to apply the K8ssandra cluster-wide RBAC fix."
+    kubectl get clusterrolebinding k8ssandra-operator-global >/dev/null 2>&1 \
+        || die "Missing ClusterRoleBinding k8ssandra-operator-global. Run ./setup.sh install_operators to apply the K8ssandra cluster-wide RBAC fix."
+}
+
 # Wait until a command succeeds, with retries
 retry() {
     local MAX="$1"; local WAIT="$2"; shift 2
@@ -980,6 +1005,24 @@ wait_for_pods_ready() {
     return 1
 }
 
+wait_for_cassandra_datacenter() {
+    local NS="$1"; local MAX="$2"; local WAIT="$3"
+    local DCS
+
+    for i in $(seq 1 "$MAX"); do
+        DCS="$(kubectl get cassandradatacenter -n "$NS" --no-headers 2>/dev/null || true)"
+        if [ -n "$DCS" ]; then
+            info "[$i/$MAX] Cassandra datacenter detected"
+            return 0
+        fi
+        info "[$i/$MAX] Waiting for Cassandra datacenter creation..."
+        sleep "$WAIT"
+    done
+
+    kubectl get cassandradatacenter -n "$NS" 2>/dev/null || true
+    return 1
+}
+
 select_vault_pod() {
     kubectl get pods -n "$VAULT_NS" --no-headers 2>/dev/null \
         | awk '$1 ~ /^vault-[0-2]$/ && $3 == "Running" {print $1; exit}'
@@ -1716,6 +1759,7 @@ ensure_operator_releases() {
         redis.redis.redis.opstreelabs.in
     check_release k8ssandra-operator "$k8ssandra_namespace" "K8ssandra Operator" k8ssandra-operator \
         k8ssandraclusters.k8ssandra.io
+    ensure_k8ssandra_cluster_wide "$k8ssandra_namespace"
     echo ""
 
     [ "$failed" -eq 0 ] || die "One or more operator releases are missing"
@@ -1835,6 +1879,8 @@ deploy() {
                     || die "Cassandra ExternalSecret did not become Ready"
                 retry 18 10 kubectl get secret "$RELEASE-cassandra-credentials" -n "$NAMESPACE" >/dev/null \
                     || die "Cassandra credentials secret was not created"
+                wait_for_cassandra_datacenter "$NAMESPACE" 60 10 \
+                    || die "CassandraDatacenter was not created"
                 ;;
         esac
     done
