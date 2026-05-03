@@ -656,7 +656,7 @@ redis:
 
   cluster:
     # Redis is small and memory-sensitive, so requests stay modest.
-    instances: 3
+    instances: 1
     image: redis:7.2-alpine
     probes:
       # The operator's default TLS exec probes only allow a 1s timeout, which
@@ -790,10 +790,10 @@ cassandra:
       datacenter: dc1
     resources:
       requests:
-        cpu: "250m"
+        cpu: "100m"
         memory: "512Mi"
       limits:
-        cpu: "500m"
+        cpu: "300m"
         memory: "1Gi"
     configBuilderResources:
       requests:

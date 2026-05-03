@@ -104,16 +104,26 @@ deployment_env_value() {
 ensure_k8ssandra_cluster_wide() {
     local namespace="$1"
     local watch_namespace
+    local cass_watch_namespace
 
     watch_namespace="$(deployment_env_value "$namespace" k8ssandra-operator WATCH_NAMESPACE)"
     if [ -n "$watch_namespace" ]; then
         die "K8ssandra operator is still namespace-scoped (WATCH_NAMESPACE=$watch_namespace). Run ./setup.sh install_operators to apply the cluster-wide watch fix before deploying Cassandra."
     fi
 
+    cass_watch_namespace="$(deployment_env_value "$namespace" k8ssandra-operator-cass-operator WATCH_NAMESPACE)"
+    if [ -n "$cass_watch_namespace" ]; then
+        die "cass-operator is still namespace-scoped (WATCH_NAMESPACE=$cass_watch_namespace). Run ./setup.sh install_operators to apply the cluster-wide Cassandra watch fix before deploying Cassandra."
+    fi
+
     kubectl get clusterrole k8ssandra-operator-global >/dev/null 2>&1 \
         || die "Missing ClusterRole k8ssandra-operator-global. Run ./setup.sh install_operators to apply the K8ssandra cluster-wide RBAC fix."
     kubectl get clusterrolebinding k8ssandra-operator-global >/dev/null 2>&1 \
         || die "Missing ClusterRoleBinding k8ssandra-operator-global. Run ./setup.sh install_operators to apply the K8ssandra cluster-wide RBAC fix."
+    kubectl get clusterrole k8ssandra-operator-cass-operator-global >/dev/null 2>&1 \
+        || die "Missing ClusterRole k8ssandra-operator-cass-operator-global. Run ./setup.sh install_operators to apply the cass-operator cluster-wide RBAC fix."
+    kubectl get clusterrolebinding k8ssandra-operator-cass-operator-global >/dev/null 2>&1 \
+        || die "Missing ClusterRoleBinding k8ssandra-operator-cass-operator-global. Run ./setup.sh install_operators to apply the cass-operator cluster-wide RBAC fix."
 }
 
 # Wait until a command succeeds, with retries

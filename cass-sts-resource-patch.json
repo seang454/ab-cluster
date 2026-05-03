@@ -1,0 +1,30 @@
+[
+  {
+    "op": "replace",
+    "path": "/spec/template/spec/initContainers/1/resources",
+    "value": {
+      "requests": {
+        "cpu": "50m",
+        "memory": "64Mi"
+      },
+      "limits": {
+        "cpu": "100m",
+        "memory": "128Mi"
+      }
+    }
+  },
+  {
+    "op": "replace",
+    "path": "/spec/template/spec/containers/2/resources",
+    "value": {
+      "requests": {
+        "cpu": "20m",
+        "memory": "64Mi"
+      },
+      "limits": {
+        "cpu": "50m",
+        "memory": "128Mi"
+      }
+    }
+  }
+]

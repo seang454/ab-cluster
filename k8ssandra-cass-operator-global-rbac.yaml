@@ -1,0 +1,54 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: k8ssandra-operator-cass-operator-global
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "persistentvolumes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["daemonsets", "deployments", "replicasets", "statefulsets"]
+    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments/finalizers"]
+    verbs: ["update"]
+  - apiGroups: ["cassandra.datastax.com"]
+    resources: ["cassandradatacenters"]
+    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+  - apiGroups: ["cassandra.datastax.com"]
+    resources: ["cassandradatacenters/finalizers"]
+    verbs: ["delete", "update"]
+  - apiGroups: ["cassandra.datastax.com"]
+    resources: ["cassandradatacenters/status"]
+    verbs: ["get", "patch", "update"]
+  - apiGroups: ["control.k8ssandra.io"]
+    resources: ["cassandratasks"]
+    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+  - apiGroups: ["control.k8ssandra.io"]
+    resources: ["cassandratasks/finalizers"]
+    verbs: ["update"]
+  - apiGroups: ["control.k8ssandra.io"]
+    resources: ["cassandratasks/status"]
+    verbs: ["get", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["configmaps", "endpoints", "events", "persistentvolumeclaims", "pods", "secrets", "services"]
+    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get"]
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["create", "delete", "get", "list", "patch", "update", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: k8ssandra-operator-cass-operator-global
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: k8ssandra-operator-cass-operator-global
+subjects:
+  - kind: ServiceAccount
+    name: k8ssandra-operator-cass-operator
+    namespace: database-operators

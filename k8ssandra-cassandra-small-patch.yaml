@@ -1,0 +1,13 @@
+spec:
+  cassandra:
+    datacenters:
+      - metadata:
+          name: dc1
+        size: 1
+        resources:
+          requests:
+            cpu: 100m
+            memory: 512Mi
+          limits:
+            cpu: 300m
+            memory: 1Gi

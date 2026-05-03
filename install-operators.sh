@@ -507,10 +507,16 @@ install_k8ssandra() {
     || die "Failed to install K8ssandra operator"
   kubectl apply -f "$SCRIPT_DIR/k8ssandra-operator-global-rbac.yaml" \
     || die "Failed to apply cluster-scoped RBAC for K8ssandra operator"
+  kubectl apply -f "$SCRIPT_DIR/k8ssandra-cass-operator-global-rbac.yaml" \
+    || die "Failed to apply cluster-scoped RBAC for cass-operator"
   kubectl set env deployment/k8ssandra-operator -n "$install_namespace" WATCH_NAMESPACE- \
     || die "Failed to switch K8ssandra operator to cluster-wide watch"
+  kubectl set env deployment/k8ssandra-operator-cass-operator -n "$install_namespace" WATCH_NAMESPACE- \
+    || die "Failed to switch cass-operator to cluster-wide watch"
   kubectl rollout status deployment/k8ssandra-operator -n "$install_namespace" --timeout=5m \
     || die "K8ssandra operator rollout failed after enabling cluster-wide watch"
+  kubectl rollout status deployment/k8ssandra-operator-cass-operator -n "$install_namespace" --timeout=5m \
+    || die "cass-operator rollout failed after enabling cluster-wide watch"
   ok "K8ssandra operator installed in namespace $install_namespace"
 }
 

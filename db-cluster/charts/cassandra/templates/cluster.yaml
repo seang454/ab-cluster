@@ -11,6 +11,20 @@ spec:
     serverVersion: "4.1.3"
     serverImage: {{ .Values.cluster.image }}
     clusterName: {{ .Values.cluster.config.clusterName }}
+    configBuilderResources:
+      requests:
+        cpu: {{ .Values.cluster.configBuilderResources.requests.cpu }}
+        memory: {{ .Values.cluster.configBuilderResources.requests.memory }}
+      limits:
+        cpu: {{ .Values.cluster.configBuilderResources.limits.cpu }}
+        memory: {{ .Values.cluster.configBuilderResources.limits.memory }}
+    systemLoggerResources:
+      requests:
+        cpu: {{ .Values.cluster.systemLoggerResources.requests.cpu }}
+        memory: {{ .Values.cluster.systemLoggerResources.requests.memory }}
+      limits:
+        cpu: {{ .Values.cluster.systemLoggerResources.limits.cpu }}
+        memory: {{ .Values.cluster.systemLoggerResources.limits.memory }}
     {{- if and (get $monitoring "enabled") (get $prometheus "enabled") }}
     telemetry:
       prometheus:
@@ -66,20 +80,6 @@ spec:
         limits:
           cpu: {{ .Values.cluster.resources.limits.cpu }}
           memory: {{ .Values.cluster.resources.limits.memory }}
-      configBuilderResources:
-        requests:
-          cpu: {{ .Values.cluster.configBuilderResources.requests.cpu }}
-          memory: {{ .Values.cluster.configBuilderResources.requests.memory }}
-        limits:
-          cpu: {{ .Values.cluster.configBuilderResources.limits.cpu }}
-          memory: {{ .Values.cluster.configBuilderResources.limits.memory }}
-      systemLoggerResources:
-        requests:
-          cpu: {{ .Values.cluster.systemLoggerResources.requests.cpu }}
-          memory: {{ .Values.cluster.systemLoggerResources.requests.memory }}
-        limits:
-          cpu: {{ .Values.cluster.systemLoggerResources.limits.cpu }}
-          memory: {{ .Values.cluster.systemLoggerResources.limits.memory }}
 
       storageConfig:
         cassandraDataVolumeClaimSpec:
