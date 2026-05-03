@@ -708,11 +708,11 @@ redis:
 
   exporter:
     # Redis metrics are exposed through the operator's native redis-exporter.
-    enabled: false
+    enabled: true
     image: quay.io/opstree/redis-exporter:v1.44.0
 
   monitoring:
-    enabled: false
+    enabled: true
     serviceMonitor:
       enabled: true
       interval: 30s
@@ -846,7 +846,7 @@ cassandra:
       for: 10m
 
   monitoring:
-    enabled: false
+    enabled: true
     prometheus:
       enabled: true
       commonLabels:
