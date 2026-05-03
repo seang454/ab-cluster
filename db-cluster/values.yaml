@@ -121,9 +121,9 @@ postgresql:
     admin: ""
     standby: ""
   externalAccess:
-    # This platform exposes PostgreSQL through the shared external HAProxy, not
-    # a cloud LoadBalancer service.
-    enabled: false
+    # Enable external PostgreSQL access by default through the shared external
+    # HAProxy; keep the operator-facing service type internal.
+    enabled: true
     serviceType: ClusterIP
     serviceName: ""
     externalIP: ""
@@ -495,7 +495,7 @@ mysql:
     publicHostnames:
       - mysql-db.seang.shop
   tls:
-    enabled: false
+    enabled: true
     mode: certManager
     sslSecretName: ""
     sslInternalSecretName: ""
@@ -762,6 +762,15 @@ cassandra:
     internodeEncryption: all
     # The subchart generates the JKS secrets automatically during Helm install/upgrade.
     createSecrets: true
+    serverSecretName: cassandra-server-keystore-secret
+    clientSecretName: cassandra-client-trust-secret
+    # Leave blank to let the TLS bootstrap job generate internal passwords.
+    serverSecret:
+      keystorePassword: ""
+      truststorePassword: ""
+    clientSecret:
+      keystorePassword: ""
+      truststorePassword: ""
     # When Cassandra is disabled, the next upgrade removes the datacenter and PVCs.
     # Keep the cleanup logic itself available, but require an explicit opt-in so
     # MySQL/PostgreSQL/MongoDB releases do not run Cassandra cleanup jobs just
@@ -772,19 +781,6 @@ cassandra:
     # release. Leaving this false prevents stray cleanup jobs during unrelated
     # database deploys.
     enabled: false
-    serverSecretName: cassandra-server-keystore-secret
-    clientSecretName: cassandra-client-trust-secret
-    # SECURITY FIX: Removed hardcoded passwords. These MUST be provided via Vault/ExternalSecret
-    # or command-line override. Never commit plaintext passwords to version control.
-    # Example override: --set cassandra.tls.serverSecret.keystorePassword="$(vault kv get -field=password secret/cassandra/server)"
-    serverSecret:
-      keystorePassword: ""
-      truststorePassword: ""
-
-    clientSecret:
-      keystorePassword: ""
-      truststorePassword: ""
-
   cluster:
     # Cassandra needs memory-heavy config-builder and logger sidecars to stay healthy.
     instances: 3

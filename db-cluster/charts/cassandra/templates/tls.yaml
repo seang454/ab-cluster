@@ -13,6 +13,12 @@
 {{- $serverSecretName := include "cassandra.serverSecretName" . -}}
 {{- $clientSecretName := include "cassandra.clientSecretName" . -}}
 {{- $caConfigName := printf "%s-client-ca" (include "cassandra.fullname" .) -}}
+{{- $serverSecret := .Values.tls.serverSecret | default dict -}}
+{{- $clientSecret := .Values.tls.clientSecret | default dict -}}
+{{- $serverKeystorePassword := get $serverSecret "keystorePassword" | default "" -}}
+{{- $serverTruststorePassword := get $serverSecret "truststorePassword" | default "" -}}
+{{- $clientKeystorePassword := get $clientSecret "keystorePassword" | default "" -}}
+{{- $clientTruststorePassword := get $clientSecret "truststorePassword" | default "" -}}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -89,6 +95,20 @@ spec:
           client_pass="${CLIENT_KEYSTORE_PASSWORD}"
           client_trust_pass="${CLIENT_TRUSTSTORE_PASSWORD}"
 
+          generate_password() {
+            tr -dc 'A-Za-z0-9' </dev/urandom | head -c 24
+          }
+
+          [ -n "$server_pass" ] || server_pass="$(generate_password)"
+          [ -n "$server_trust_pass" ] || server_trust_pass="$(generate_password)"
+          [ -n "$client_pass" ] || client_pass="$(generate_password)"
+          [ -n "$client_trust_pass" ] || client_trust_pass="$(generate_password)"
+
+          printf '%s' "$server_pass" > /work/server-keystore-password
+          printf '%s' "$server_trust_pass" > /work/server-truststore-password
+          printf '%s' "$client_pass" > /work/client-keystore-password
+          printf '%s' "$client_trust_pass" > /work/client-truststore-password
+
           keytool -genkeypair \
             -keyalg RSA \
             -alias cassandra \
@@ -124,13 +144,13 @@ spec:
         - name: CASSANDRA_SAN_LIST
           value: {{ join "," $dnsSans | quote }}
         - name: SERVER_KEYSTORE_PASSWORD
-          value: {{ .Values.tls.serverSecret.keystorePassword | quote }}
+          value: {{ $serverKeystorePassword | quote }}
         - name: SERVER_TRUSTSTORE_PASSWORD
-          value: {{ .Values.tls.serverSecret.truststorePassword | quote }}
+          value: {{ $serverTruststorePassword | quote }}
         - name: CLIENT_KEYSTORE_PASSWORD
-          value: {{ .Values.tls.clientSecret.keystorePassword | quote }}
+          value: {{ $clientKeystorePassword | quote }}
         - name: CLIENT_TRUSTSTORE_PASSWORD
-          value: {{ .Values.tls.clientSecret.truststorePassword | quote }}
+          value: {{ $clientTruststorePassword | quote }}
         volumeMounts:
         - name: work
           mountPath: /work
@@ -143,6 +163,10 @@ spec:
         - -ec
         - |
           set -eu
+          server_pass="$(cat /work/server-keystore-password)"
+          server_trust_pass="$(cat /work/server-truststore-password)"
+          client_pass="$(cat /work/client-keystore-password)"
+          client_trust_pass="$(cat /work/client-truststore-password)"
 
           if kubectl get secret {{ $serverSecretName | quote }} >/dev/null 2>&1 \
             && kubectl get secret {{ $clientSecretName | quote }} >/dev/null 2>&1 \
@@ -154,15 +178,15 @@ spec:
           kubectl create secret generic {{ $serverSecretName | quote }} \
             --from-file=keystore=/work/server-keystore.jks \
             --from-file=truststore=/work/server-truststore.jks \
-            --from-literal=keystore-password="{{ .Values.tls.serverSecret.keystorePassword }}" \
-            --from-literal=truststore-password="{{ .Values.tls.serverSecret.truststorePassword }}" \
+            --from-literal=keystore-password="$server_pass" \
+            --from-literal=truststore-password="$server_trust_pass" \
             --dry-run=client -o yaml | kubectl apply -f -
 
           kubectl create secret generic {{ $clientSecretName | quote }} \
             --from-file=keystore=/work/client-keystore.jks \
             --from-file=truststore=/work/client-truststore.jks \
-            --from-literal=keystore-password="{{ .Values.tls.clientSecret.keystorePassword }}" \
-            --from-literal=truststore-password="{{ .Values.tls.clientSecret.truststorePassword }}" \
+            --from-literal=keystore-password="$client_pass" \
+            --from-literal=truststore-password="$client_trust_pass" \
             --dry-run=client -o yaml | kubectl apply -f -
 
           kubectl create configmap {{ $caConfigName | quote }} \
