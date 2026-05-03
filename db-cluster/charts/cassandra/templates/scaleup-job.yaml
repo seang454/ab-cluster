@@ -1,0 +1,46 @@
+{{- $targetInstances := int (default 1 .Values.cluster.instances) }}
+{{- if gt $targetInstances 1 }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "cassandra.fullname" . }}-scaleup
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 2
+  template:
+    spec:
+      serviceAccountName: {{ include "cassandra.fullname" . }}-scaleup
+      restartPolicy: OnFailure
+      containers:
+        - name: scaleup
+          image: bitnami/kubectl:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              ns="{{ .Release.Namespace }}"
+              target="{{ $targetInstances }}"
+              parent="{{ include "cassandra.fullname" . }}"
+              dc="{{ include "cassandra.datacenter" . }}"
+              internal="{{ include "cassandra.clusterName" . }}"
+              pod="${internal}-${dc}-default-sts-0"
+
+              echo "Waiting for Cassandra seed pod ${pod} to become Ready before scaling to ${target}..."
+              kubectl wait --for=condition=Ready "pod/${pod}" -n "${ns}" --timeout=45m
+
+              echo "Patching K8ssandraCluster ${parent} to target size ${target}"
+              kubectl patch k8ssandracluster "${parent}" -n "${ns}" --type json \
+                -p="[{\"op\":\"replace\",\"path\":\"/spec/cassandra/datacenters/0/size\",\"value\":${target}}]"
+
+              echo "Patching CassandraDatacenter ${dc} to target size ${target}"
+              kubectl patch cassandradatacenter "${dc}" -n "${ns}" --type json \
+                -p="[{\"op\":\"replace\",\"path\":\"/spec/size\",\"value\":${target}}]"
+
+              echo "Waiting for StatefulSet ${internal}-${dc}-default-sts to report ${target} replicas"
+              kubectl rollout status "statefulset/${internal}-${dc}-default-sts" -n "${ns}" --timeout=45m
+{{- end }}

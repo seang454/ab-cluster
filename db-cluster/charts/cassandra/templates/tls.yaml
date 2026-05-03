@@ -5,7 +5,7 @@
 {{- if gt (len $publicHosts) 0 -}}
 {{- $publicHost = index $publicHosts 0 -}}
 {{- end -}}
-{{- $serviceName := printf "%s-%s-service" .Values.cluster.config.clusterName .Values.cluster.config.datacenter -}}
+{{- $serviceName := printf "%s-%s-service" (include "cassandra.clusterName" .) (include "cassandra.datacenter" .) -}}
 {{- $dnsSans := list (printf "dns:%s" $publicHost) (printf "dns:%s" $serviceName) (printf "dns:%s.%s" $serviceName .Release.Namespace) (printf "dns:%s.%s.svc" $serviceName .Release.Namespace) -}}
 {{- range $host := $publicHosts -}}
 {{- $dnsSans = append $dnsSans (printf "dns:%s" $host) -}}

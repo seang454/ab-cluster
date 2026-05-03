@@ -2,6 +2,14 @@
 {{- printf "%s-cassandra" .Release.Name | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
+{{- define "cassandra.clusterName" -}}
+{{- default (include "cassandra.fullname" .) .Values.cluster.config.clusterName -}}
+{{- end -}}
+
+{{- define "cassandra.datacenter" -}}
+{{- default "dc1" .Values.cluster.config.datacenter -}}
+{{- end -}}
+
 {{- define "cassandra.secretName" -}}
 {{- printf "%s-cassandra-credentials" .Release.Name | trunc 63 | trimSuffix "-" -}}
 {{- end -}}

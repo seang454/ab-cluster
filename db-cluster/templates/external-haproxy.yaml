@@ -2,7 +2,7 @@
 {{- $expose := $proxy.expose | default dict -}}
 {{- $ports := $proxy.ports | default dict -}}
 {{- $cassandra := .Values.cassandra | default dict -}}
-{{- $cassandraCluster := dig "cluster" "config" "clusterName" "" $cassandra -}}
+{{- $cassandraCluster := default (printf "%s-cassandra" .Release.Name) (dig "cluster" "config" "clusterName" "" $cassandra) -}}
 {{- $cassandraDatacenter := dig "cluster" "config" "datacenter" "dc1" $cassandra -}}
 {{- $mongoExt := .Values.mongodb.externalAccess | default dict -}}
 {{- $mongoHorizons := get $mongoExt "replicaSetHorizons" | default dict -}}

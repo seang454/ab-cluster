@@ -2,7 +2,7 @@
 {{- $cleanup := dig "tls" "cleanupOnDisable" false $cassandra -}}
 {{- $cleanupEnabled := dig "cleanup" "enabled" false $cassandra -}}
 {{- if and (not (dig "enabled" false $cassandra)) $cleanup $cleanupEnabled }}
-{{- $clusterName := dig "cluster" "config" "clusterName" "seang-cassandra" $cassandra -}}
+{{- $clusterName := default (printf "%s-cassandra" .Release.Name) (dig "cluster" "config" "clusterName" "" $cassandra) -}}
 {{- $datacenter := dig "cluster" "config" "datacenter" "dc1" $cassandra -}}
 {{- $namespace := .Release.Namespace -}}
 {{- $statefulSet := printf "%s-%s-default-sts" $clusterName $datacenter -}}
