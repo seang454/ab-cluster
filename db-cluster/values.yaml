@@ -177,11 +177,11 @@ postgresql:
 
     resources:
       requests:
-        cpu: "100m"
-        memory: "512Mi"
+        cpu: "250m"
+        memory: "768Mi"
       limits:
-        cpu: "300m"
-        memory: "1Gi"
+        cpu: "750m"
+        memory: "2Gi"
 
     podAntiAffinityType: preferred
     whenUnsatisfiable: DoNotSchedule
@@ -406,11 +406,11 @@ mongodb:
       readinessFailureThreshold: 30
     resources:
       requests:
-        cpu: "250m"
-        memory: "512Mi"
+        cpu: "300m"
+        memory: "768Mi"
       limits:
-        cpu: "500m"
-        memory: "1Gi"
+        cpu: "800m"
+        memory: "2Gi"
 
   storage:
     # Size of each MongoDB member's persistent volume.
@@ -564,11 +564,11 @@ mysql:
       livenessTimeoutSeconds: 20
     resources:
       requests:
-        cpu: "150m"
-        memory: "768Mi"
+        cpu: "300m"
+        memory: "1Gi"
       limits:
-        cpu: "250m"
-        memory: "1536Mi"
+        cpu: "800m"
+        memory: "2Gi"
 
   storage:
     # Persistent volume size for the MySQL data directory.
@@ -673,11 +673,11 @@ redis:
       livenessFailureThreshold: 6
     resources:
       requests:
-        cpu: "50m"
-        memory: "128Mi"
+        cpu: "100m"
+        memory: "256Mi"
       limits:
-        cpu: "150m"
-        memory: "512Mi"
+        cpu: "300m"
+        memory: "768Mi"
 
   storage:
     # Redis cluster mode needs a writable node-conf volume for nodes.conf.
@@ -789,30 +789,30 @@ cassandra:
     config:
       # Leave blank to derive a unique K8ssandra cluster name from the Helm
       # release. This prevents different Cassandra releases from colliding on
-      # the same generated StatefulSet, Service, and PVC names.
+      # the same generated StatefulSet, Service, PVC, and CassandraDatacenter names.
       clusterName: ""
-      datacenter: dc1
+      datacenter: ""
     resources:
       requests:
-        cpu: "100m"
-        memory: "512Mi"
-      limits:
         cpu: "300m"
         memory: "1Gi"
+      limits:
+        cpu: "1"
+        memory: "2Gi"
     configBuilderResources:
       requests:
-        cpu: "50m"
-        memory: "64Mi"
-      limits:
         cpu: "100m"
         memory: "128Mi"
+      limits:
+        cpu: "250m"
+        memory: "256Mi"
     systemLoggerResources:
       requests:
-        cpu: "20m"
-        memory: "64Mi"
-      limits:
         cpu: "50m"
         memory: "128Mi"
+      limits:
+        cpu: "100m"
+        memory: "256Mi"
 
   storage:
     # Persistent volume size for each Cassandra node.

@@ -3,11 +3,36 @@
 {{- end -}}
 
 {{- define "cassandra.clusterName" -}}
-{{- default (include "cassandra.fullname" .) .Values.cluster.config.clusterName -}}
+{{- $values := .Values | default dict -}}
+{{- if hasKey $values "cluster" -}}
+{{- $cluster := get $values "cluster" | default dict -}}
+{{- $config := get $cluster "config" | default dict -}}
+{{- default (include "cassandra.fullname" .) (get $config "clusterName" | default "") -}}
+{{- else if hasKey $values "cassandra" -}}
+{{- $cassandra := get $values "cassandra" | default dict -}}
+{{- $cluster := get $cassandra "cluster" | default dict -}}
+{{- $config := get $cluster "config" | default dict -}}
+{{- default (printf "%s-cassandra" .Release.Name) (get $config "clusterName" | default "") -}}
+{{- else -}}
+{{- printf "%s-cassandra" .Release.Name -}}
+{{- end -}}
 {{- end -}}
 
 {{- define "cassandra.datacenter" -}}
-{{- default "dc1" .Values.cluster.config.datacenter -}}
+{{- $values := .Values | default dict -}}
+{{- $defaultDc := printf "%s-dc1" .Release.Name | trunc 63 | trimSuffix "-" -}}
+{{- if hasKey $values "cluster" -}}
+{{- $cluster := get $values "cluster" | default dict -}}
+{{- $config := get $cluster "config" | default dict -}}
+{{- default $defaultDc (get $config "datacenter" | default "") -}}
+{{- else if hasKey $values "cassandra" -}}
+{{- $cassandra := get $values "cassandra" | default dict -}}
+{{- $cluster := get $cassandra "cluster" | default dict -}}
+{{- $config := get $cluster "config" | default dict -}}
+{{- default $defaultDc (get $config "datacenter" | default "") -}}
+{{- else -}}
+{{- $defaultDc -}}
+{{- end -}}
 {{- end -}}
 
 {{- define "cassandra.secretName" -}}

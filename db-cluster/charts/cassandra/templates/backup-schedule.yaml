@@ -7,7 +7,7 @@ metadata:
 spec:
   backupSpec:
     backupType: {{ .Values.backup.schedule.backupType | quote }}
-    cassandraDatacenter: {{ .Values.cluster.config.datacenter | quote }}
+    cassandraDatacenter: {{ include "cassandra.datacenter" . | quote }}
   cronSchedule: {{ .Values.backup.schedule.cron | quote }}
   disabled: {{ .Values.backup.schedule.disabled }}
 {{- end }}

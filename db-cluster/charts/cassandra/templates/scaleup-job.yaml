@@ -38,14 +38,30 @@ spec:
               echo "Waiting for Cassandra seed pod ${pod} to become Ready before scaling to ${target}..."
               kubectl wait --for=condition=Ready "pod/${pod}" -n "${ns}" --timeout=45m
 
-              echo "Patching K8ssandraCluster ${parent} to target size ${target}"
-              kubectl patch k8ssandracluster "${parent}" -n "${ns}" --type json \
-                -p="[{\"op\":\"replace\",\"path\":\"/spec/cassandra/datacenters/0/size\",\"value\":${target}}]"
+              current=1
+              while [ "${current}" -lt "${target}" ]; do
+                next=$((current + 1))
 
-              echo "Patching CassandraDatacenter ${dc} to target size ${target}"
-              kubectl patch cassandradatacenter "${dc}" -n "${ns}" --type json \
-                -p="[{\"op\":\"replace\",\"path\":\"/spec/size\",\"value\":${target}}]"
+                echo "Patching K8ssandraCluster ${parent} to size ${next}"
+                kubectl patch k8ssandracluster "${parent}" -n "${ns}" --type json \
+                  -p="[{\"op\":\"replace\",\"path\":\"/spec/cassandra/datacenters/0/size\",\"value\":${next}}]"
 
-              echo "Waiting for StatefulSet ${internal}-${dc}-default-sts to report ${target} replicas"
-              kubectl rollout status "statefulset/${internal}-${dc}-default-sts" -n "${ns}" --timeout=45m
+                echo "Patching CassandraDatacenter ${dc} to size ${next}"
+                kubectl patch cassandradatacenter "${dc}" -n "${ns}" --type json \
+                  -p="[{\"op\":\"replace\",\"path\":\"/spec/size\",\"value\":${next}}]"
+
+                next_pod="${internal}-${dc}-default-sts-$((next - 1))"
+                echo "Waiting for pod ${next_pod} to be created..."
+                until kubectl get "pod/${next_pod}" -n "${ns}" >/dev/null 2>&1; do
+                  sleep 10
+                done
+
+                echo "Waiting for pod ${next_pod} to become Ready..."
+                kubectl wait --for=condition=Ready "pod/${next_pod}" -n "${ns}" --timeout=45m
+
+                echo "Waiting for StatefulSet ${internal}-${dc}-default-sts to settle at ${next} replicas"
+                kubectl rollout status "statefulset/${internal}-${dc}-default-sts" -n "${ns}" --timeout=45m
+
+                current="${next}"
+              done
 {{- end }}
