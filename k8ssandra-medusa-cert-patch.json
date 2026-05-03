@@ -1,0 +1,9 @@
+{
+  "spec": {
+    "medusa": {
+      "certificatesSecretRef": {
+        "name": "cassandra-client-trust-secret"
+      }
+    }
+  }
+}

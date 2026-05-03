@@ -97,6 +97,10 @@ spec:
       repository: k8ssandra
       name: medusa
       tag: {{ .Values.backup.medusaImage | splitList ":" | last }}
+    {{- if and $tls.enabled (dig "clientEncryption" true $tls) }}
+    certificatesSecretRef:
+      name: {{ include "cassandra.clientSecretName" . }}
+    {{- end }}
     storageProperties:
       storageProvider: {{ tpl (.Values.backup.s3.provider | default "s3_compatible") . | quote }}
       bucketName: {{ tpl .Values.backup.s3.bucket . | quote }}

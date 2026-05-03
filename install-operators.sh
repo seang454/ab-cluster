@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 NAMESPACE="${NAMESPACE:-databases}"
 VALUES_FILE="${VALUES_FILE:-./db-cluster/values.yaml}"
 CNPG_NAMESPACE="${CNPG_NAMESPACE:-cnpg-system}"
@@ -489,8 +491,9 @@ install_k8ssandra() {
     echo "    Requested K8ssandra operator namespace $K8SSANDRA_NAMESPACE conflicts with existing ownership; using $install_namespace"
   fi
 
-  if operator_release_healthy \
+  if percona_operator_release_healthy \
     k8ssandra-operator "$install_namespace" "K8ssandra operator" "k8ssandra-operator" \
+    true \
     k8ssandraclusters.k8ssandra.io; then
     return 0
   fi
@@ -502,6 +505,12 @@ install_k8ssandra() {
     --version "$K8SSANDRA_VERSION" \
     --wait --timeout 5m \
     || die "Failed to install K8ssandra operator"
+  kubectl apply -f "$SCRIPT_DIR/k8ssandra-operator-global-rbac.yaml" \
+    || die "Failed to apply cluster-scoped RBAC for K8ssandra operator"
+  kubectl set env deployment/k8ssandra-operator -n "$install_namespace" WATCH_NAMESPACE- \
+    || die "Failed to switch K8ssandra operator to cluster-wide watch"
+  kubectl rollout status deployment/k8ssandra-operator -n "$install_namespace" --timeout=5m \
+    || die "K8ssandra operator rollout failed after enabling cluster-wide watch"
   ok "K8ssandra operator installed in namespace $install_namespace"
 }
 
