@@ -203,6 +203,31 @@ wait_for_externalsecret_stable() {
     return 1
 }
 
+externalsecret_ready() {
+    local namespace="$1"
+    local name="$2"
+    local target_secret="${3:-$name}"
+    local ready_status
+
+    ready_status="$(
+        kubectl get externalsecret "$name" -n "$namespace" \
+            -o jsonpath="{.status.conditions[?(@.type=='Ready')].status}" 2>/dev/null || true
+    )"
+
+    [ "$ready_status" = "True" ] || return 1
+    kubectl get secret "$target_secret" -n "$namespace" >/dev/null 2>&1
+}
+
+wait_for_externalsecret_ready() {
+    local namespace="$1"
+    local name="$2"
+    local target_secret="${3:-$name}"
+    local attempts="${4:-24}"
+    local delay="${5:-5}"
+
+    retry "$attempts" "$delay" externalsecret_ready "$namespace" "$name" "$target_secret"
+}
+
 values_args() {
     local DEFAULT_VALUES="$CHART_DIR/values.yaml"
     [ -f "$DEFAULT_VALUES" ] || die "Default values file not found: $DEFAULT_VALUES"
@@ -1951,12 +1976,12 @@ spec:
         property: root-password
 EOF
 
-    kubectl wait --for=condition=Ready externalsecret/minio-credentials -n "$MINIO_NAMESPACE" --timeout=180s >/dev/null 2>&1 \
+    wait_for_externalsecret_ready "$MINIO_NAMESPACE" minio-credentials minio-credentials 24 5 \
         || die "MinIO storage ExternalSecret did not become Ready"
     retry 18 10 kubectl get secret minio-credentials -n "$MINIO_NAMESPACE" >/dev/null \
         || die "MinIO credentials secret was not created in $MINIO_NAMESPACE"
 
-    kubectl wait --for=condition=Ready externalsecret/minio-credentials -n "$NAMESPACE" --timeout=180s >/dev/null 2>&1 \
+    wait_for_externalsecret_ready "$NAMESPACE" minio-credentials minio-credentials 24 5 \
         || die "MinIO databases ExternalSecret did not become Ready"
     retry 18 10 kubectl get secret minio-credentials -n "$NAMESPACE" >/dev/null \
         || die "MinIO credentials secret was not created in $NAMESPACE"
