@@ -794,11 +794,11 @@ cassandra:
       datacenter: ""
     resources:
       requests:
-        cpu: "300m"
-        memory: "1Gi"
+        cpu: "500m"
+        memory: "1536Mi"
       limits:
-        cpu: "1"
-        memory: "2Gi"
+        cpu: "1500m"
+        memory: "3Gi"
     configBuilderResources:
       requests:
         cpu: "100m"
