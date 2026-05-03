@@ -30,6 +30,11 @@ spec:
               internal="{{ include "cassandra.clusterName" . }}"
               pod="${internal}-${dc}-default-sts-0"
 
+              echo "Waiting for Cassandra seed pod ${pod} to be created..."
+              until kubectl get "pod/${pod}" -n "${ns}" >/dev/null 2>&1; do
+                sleep 10
+              done
+
               echo "Waiting for Cassandra seed pod ${pod} to become Ready before scaling to ${target}..."
               kubectl wait --for=condition=Ready "pod/${pod}" -n "${ns}" --timeout=45m
 
