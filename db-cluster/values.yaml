@@ -762,8 +762,10 @@ cassandra:
     internodeEncryption: all
     # The subchart generates the JKS secrets automatically during Helm install/upgrade.
     createSecrets: true
-    serverSecretName: cassandra-server-keystore-secret
-    clientSecretName: cassandra-client-trust-secret
+    # Leave blank to get release-unique secret names. The chart also treats the
+    # old shared names as legacy values and falls back to release-unique names.
+    serverSecretName: ""
+    clientSecretName: ""
     # Leave blank to let the TLS bootstrap job generate internal passwords.
     serverSecret:
       keystorePassword: ""

@@ -4,15 +4,26 @@
 
 {{- define "cassandra.clusterName" -}}
 {{- $values := .Values | default dict -}}
+{{- $legacyCluster := "seang-cassandra" -}}
 {{- if hasKey $values "cluster" -}}
 {{- $cluster := get $values "cluster" | default dict -}}
 {{- $config := get $cluster "config" | default dict -}}
-{{- default (include "cassandra.fullname" .) (get $config "clusterName" | default "") -}}
+{{- $configured := get $config "clusterName" | default "" -}}
+{{- if or (eq $configured "") (eq $configured $legacyCluster) -}}
+{{- include "cassandra.fullname" . -}}
+{{- else -}}
+{{- $configured -}}
+{{- end -}}
 {{- else if hasKey $values "cassandra" -}}
 {{- $cassandra := get $values "cassandra" | default dict -}}
 {{- $cluster := get $cassandra "cluster" | default dict -}}
 {{- $config := get $cluster "config" | default dict -}}
-{{- default (printf "%s-cassandra" .Release.Name) (get $config "clusterName" | default "") -}}
+{{- $configured := get $config "clusterName" | default "" -}}
+{{- if or (eq $configured "") (eq $configured $legacyCluster) -}}
+{{- printf "%s-cassandra" .Release.Name -}}
+{{- else -}}
+{{- $configured -}}
+{{- end -}}
 {{- else -}}
 {{- printf "%s-cassandra" .Release.Name -}}
 {{- end -}}
@@ -21,15 +32,26 @@
 {{- define "cassandra.datacenter" -}}
 {{- $values := .Values | default dict -}}
 {{- $defaultDc := printf "%s-dc1" .Release.Name | trunc 63 | trimSuffix "-" -}}
+{{- $legacyDc := "dc1" -}}
 {{- if hasKey $values "cluster" -}}
 {{- $cluster := get $values "cluster" | default dict -}}
 {{- $config := get $cluster "config" | default dict -}}
-{{- default $defaultDc (get $config "datacenter" | default "") -}}
+{{- $configured := get $config "datacenter" | default "" -}}
+{{- if or (eq $configured "") (eq $configured $legacyDc) -}}
+{{- $defaultDc -}}
+{{- else -}}
+{{- $configured -}}
+{{- end -}}
 {{- else if hasKey $values "cassandra" -}}
 {{- $cassandra := get $values "cassandra" | default dict -}}
 {{- $cluster := get $cassandra "cluster" | default dict -}}
 {{- $config := get $cluster "config" | default dict -}}
-{{- default $defaultDc (get $config "datacenter" | default "") -}}
+{{- $configured := get $config "datacenter" | default "" -}}
+{{- if or (eq $configured "") (eq $configured $legacyDc) -}}
+{{- $defaultDc -}}
+{{- else -}}
+{{- $configured -}}
+{{- end -}}
 {{- else -}}
 {{- $defaultDc -}}
 {{- end -}}
@@ -44,16 +66,34 @@
 {{- end -}}
 
 {{- define "cassandra.serverSecretName" -}}
-{{- if and .Values.tls.enabled .Values.tls.serverSecretName -}}
-{{- .Values.tls.serverSecretName -}}
+{{- $legacyName := "cassandra-server-keystore-secret" -}}
+{{- $values := .Values | default dict -}}
+{{- $tls := dict -}}
+{{- if hasKey $values "tls" -}}
+{{- $tls = get $values "tls" | default dict -}}
+{{- else if hasKey $values "cassandra" -}}
+{{- $tls = dig "cassandra" "tls" dict $values -}}
+{{- end -}}
+{{- $configured := get $tls "serverSecretName" | default "" -}}
+{{- if and (get $tls "enabled") $configured (ne $configured $legacyName) -}}
+{{- $configured -}}
 {{- else -}}
 {{- printf "%s-server-encryption-stores" (include "cassandra.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 {{- end -}}
 
 {{- define "cassandra.clientSecretName" -}}
-{{- if and .Values.tls.enabled .Values.tls.clientSecretName -}}
-{{- .Values.tls.clientSecretName -}}
+{{- $legacyName := "cassandra-client-trust-secret" -}}
+{{- $values := .Values | default dict -}}
+{{- $tls := dict -}}
+{{- if hasKey $values "tls" -}}
+{{- $tls = get $values "tls" | default dict -}}
+{{- else if hasKey $values "cassandra" -}}
+{{- $tls = dig "cassandra" "tls" dict $values -}}
+{{- end -}}
+{{- $configured := get $tls "clientSecretName" | default "" -}}
+{{- if and (get $tls "enabled") $configured (ne $configured $legacyName) -}}
+{{- $configured -}}
 {{- else -}}
 {{- printf "%s-client-encryption-stores" (include "cassandra.fullname" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}

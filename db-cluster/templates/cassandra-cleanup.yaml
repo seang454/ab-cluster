@@ -2,8 +2,8 @@
 {{- $cleanup := dig "tls" "cleanupOnDisable" false $cassandra -}}
 {{- $cleanupEnabled := dig "cleanup" "enabled" false $cassandra -}}
 {{- if and (not (dig "enabled" false $cassandra)) $cleanup $cleanupEnabled }}
-{{- $clusterName := default (printf "%s-cassandra" .Release.Name) (dig "cluster" "config" "clusterName" "" $cassandra) -}}
-{{- $datacenter := dig "cluster" "config" "datacenter" "dc1" $cassandra -}}
+{{- $clusterName := include "cassandra.clusterName" . -}}
+{{- $datacenter := include "cassandra.datacenter" . -}}
 {{- $namespace := .Release.Namespace -}}
 {{- $statefulSet := printf "%s-%s-default-sts" $clusterName $datacenter -}}
 {{- $cassandraService := printf "%s-%s-service" $clusterName $datacenter -}}
@@ -11,8 +11,8 @@
 {{- $additionalSeedService := printf "%s-%s-additional-seed-service" $clusterName $datacenter -}}
 {{- $seedService := printf "%s-seed-service" $clusterName -}}
 {{- $superuserSecretName := printf "%s-cassandra-credentials" .Release.Name -}}
-{{- $serverSecretName := "cassandra-server-keystore-secret" -}}
-{{- $clientSecretName := "cassandra-client-trust-secret" -}}
+{{- $serverSecretName := include "cassandra.serverSecretName" . -}}
+{{- $clientSecretName := include "cassandra.clientSecretName" . -}}
 {{- $caConfigName := printf "%s-client-ca" (printf "%s-cassandra" .Release.Name) -}}
 apiVersion: v1
 kind: ServiceAccount
