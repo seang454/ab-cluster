@@ -2,8 +2,19 @@
 {{- $cleanup := dig "tls" "cleanupOnDisable" false $cassandra -}}
 {{- $cleanupEnabled := dig "cleanup" "enabled" false $cassandra -}}
 {{- if and (not (dig "enabled" false $cassandra)) $cleanup $cleanupEnabled }}
-{{- $clusterName := include "cassandra.clusterName" . -}}
-{{- $datacenter := include "cassandra.datacenter" . -}}
+{{- $config := dig "cluster" "config" dict $cassandra -}}
+{{- $legacyCluster := "seang-cassandra" -}}
+{{- $legacyDatacenter := "dc1" -}}
+{{- $clusterName := printf "%s-cassandra" .Release.Name -}}
+{{- $configuredCluster := get $config "clusterName" | default "" -}}
+{{- if and $configuredCluster (ne $configuredCluster $legacyCluster) -}}
+{{- $clusterName = $configuredCluster -}}
+{{- end -}}
+{{- $datacenter := printf "%s-dc1" .Release.Name -}}
+{{- $configuredDatacenter := get $config "datacenter" | default "" -}}
+{{- if and $configuredDatacenter (ne $configuredDatacenter $legacyDatacenter) -}}
+{{- $datacenter = $configuredDatacenter -}}
+{{- end -}}
 {{- $namespace := .Release.Namespace -}}
 {{- $statefulSet := printf "%s-%s-default-sts" $clusterName $datacenter -}}
 {{- $cassandraService := printf "%s-%s-service" $clusterName $datacenter -}}
@@ -11,8 +22,16 @@
 {{- $additionalSeedService := printf "%s-%s-additional-seed-service" $clusterName $datacenter -}}
 {{- $seedService := printf "%s-seed-service" $clusterName -}}
 {{- $superuserSecretName := printf "%s-cassandra-credentials" .Release.Name -}}
-{{- $serverSecretName := include "cassandra.serverSecretName" . -}}
-{{- $clientSecretName := include "cassandra.clientSecretName" . -}}
+{{- $serverSecretName := printf "%s-server-encryption-stores" (printf "%s-cassandra" .Release.Name) -}}
+{{- $configuredServerSecret := dig "tls" "serverSecretName" "" $cassandra -}}
+{{- if and $configuredServerSecret (ne $configuredServerSecret "cassandra-server-keystore-secret") -}}
+{{- $serverSecretName = $configuredServerSecret -}}
+{{- end -}}
+{{- $clientSecretName := printf "%s-client-encryption-stores" (printf "%s-cassandra" .Release.Name) -}}
+{{- $configuredClientSecret := dig "tls" "clientSecretName" "" $cassandra -}}
+{{- if and $configuredClientSecret (ne $configuredClientSecret "cassandra-client-trust-secret") -}}
+{{- $clientSecretName = $configuredClientSecret -}}
+{{- end -}}
 {{- $caConfigName := printf "%s-client-ca" (printf "%s-cassandra" .Release.Name) -}}
 apiVersion: v1
 kind: ServiceAccount

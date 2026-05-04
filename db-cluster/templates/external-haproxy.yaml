@@ -1,8 +1,20 @@
 {{- $proxy := .Values.externalTcpProxy | default dict -}}
 {{- $expose := $proxy.expose | default dict -}}
 {{- $ports := $proxy.ports | default dict -}}
-{{- $cassandraCluster := include "cassandra.clusterName" . -}}
-{{- $cassandraDatacenter := include "cassandra.datacenter" . -}}
+{{- $cassandra := .Values.cassandra | default dict -}}
+{{- $cassandraConfig := dig "cluster" "config" dict $cassandra -}}
+{{- $legacyCassandraCluster := "seang-cassandra" -}}
+{{- $legacyCassandraDatacenter := "dc1" -}}
+{{- $configuredCassandraCluster := get $cassandraConfig "clusterName" | default "" -}}
+{{- $configuredCassandraDatacenter := get $cassandraConfig "datacenter" | default "" -}}
+{{- $cassandraCluster := printf "%s-cassandra" .Release.Name -}}
+{{- if and $configuredCassandraCluster (ne $configuredCassandraCluster $legacyCassandraCluster) -}}
+{{- $cassandraCluster = $configuredCassandraCluster -}}
+{{- end -}}
+{{- $cassandraDatacenter := printf "%s-dc1" .Release.Name -}}
+{{- if and $configuredCassandraDatacenter (ne $configuredCassandraDatacenter $legacyCassandraDatacenter) -}}
+{{- $cassandraDatacenter = $configuredCassandraDatacenter -}}
+{{- end -}}
 {{- $mongoExt := .Values.mongodb.externalAccess | default dict -}}
 {{- $mongoHorizons := get $mongoExt "replicaSetHorizons" | default dict -}}
 {{- $mongoPublicHosts := $mongoExt.publicHostnames | default list -}}
