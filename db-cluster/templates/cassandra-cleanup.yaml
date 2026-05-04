@@ -12,9 +12,11 @@
 {{- $clusterName = $configuredCluster -}}
 {{- end -}}
 {{- $releaseSuffix := regexFind "[^-]+$" .Release.Name | default .Release.Name -}}
-{{- $datacenter := printf "dc-%s" $releaseSuffix -}}
+{{- $shortSuffix := trunc 4 $releaseSuffix -}}
+{{- $legacyMediumDatacenter := printf "dc-%s" $releaseSuffix -}}
+{{- $datacenter := printf "d%s" $shortSuffix -}}
 {{- $configuredDatacenter := get $config "datacenter" | default "" -}}
-{{- if and $configuredDatacenter (ne $configuredDatacenter $legacyDatacenter) (ne $configuredDatacenter $legacyLongDatacenter) -}}
+{{- if and $configuredDatacenter (ne $configuredDatacenter $legacyDatacenter) (ne $configuredDatacenter $legacyLongDatacenter) (ne $configuredDatacenter $legacyMediumDatacenter) -}}
 {{- $datacenter = $configuredDatacenter -}}
 {{- end -}}
 {{- $namespace := .Release.Namespace -}}

@@ -13,8 +13,10 @@
 {{- $cassandraCluster = $configuredCassandraCluster -}}
 {{- end -}}
 {{- $releaseSuffix := regexFind "[^-]+$" .Release.Name | default .Release.Name -}}
-{{- $cassandraDatacenter := printf "dc-%s" $releaseSuffix -}}
-{{- if and $configuredCassandraDatacenter (ne $configuredCassandraDatacenter $legacyCassandraDatacenter) (ne $configuredCassandraDatacenter $legacyLongCassandraDatacenter) -}}
+{{- $shortSuffix := trunc 4 $releaseSuffix -}}
+{{- $legacyMediumCassandraDatacenter := printf "dc-%s" $releaseSuffix -}}
+{{- $cassandraDatacenter := printf "d%s" $shortSuffix -}}
+{{- if and $configuredCassandraDatacenter (ne $configuredCassandraDatacenter $legacyCassandraDatacenter) (ne $configuredCassandraDatacenter $legacyLongCassandraDatacenter) (ne $configuredCassandraDatacenter $legacyMediumCassandraDatacenter) -}}
 {{- $cassandraDatacenter = $configuredCassandraDatacenter -}}
 {{- end -}}
 {{- $mongoExt := .Values.mongodb.externalAccess | default dict -}}
