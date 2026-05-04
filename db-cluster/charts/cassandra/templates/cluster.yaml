@@ -17,20 +17,6 @@ spec:
     serverImage: {{ .Values.cluster.image }}
     perNodeConfigInitContainerImage: mikefarah/yq:4
     clusterName: {{ include "cassandra.clusterName" . }}
-    configBuilderResources:
-      requests:
-        cpu: {{ .Values.cluster.configBuilderResources.requests.cpu }}
-        memory: {{ .Values.cluster.configBuilderResources.requests.memory }}
-      limits:
-        cpu: {{ .Values.cluster.configBuilderResources.limits.cpu }}
-        memory: {{ .Values.cluster.configBuilderResources.limits.memory }}
-    systemLoggerResources:
-      requests:
-        cpu: {{ .Values.cluster.systemLoggerResources.requests.cpu }}
-        memory: {{ .Values.cluster.systemLoggerResources.requests.memory }}
-      limits:
-        cpu: {{ .Values.cluster.systemLoggerResources.limits.cpu }}
-        memory: {{ .Values.cluster.systemLoggerResources.limits.memory }}
     {{- if and (get $monitoring "enabled") (get $prometheus "enabled") }}
     telemetry:
       prometheus:
@@ -102,17 +88,6 @@ spec:
           periodSeconds: {{ .Values.cluster.probes.readinessPeriodSeconds }}
           timeoutSeconds: {{ .Values.cluster.probes.readinessTimeoutSeconds }}
           failureThreshold: {{ .Values.cluster.probes.readinessFailureThreshold }}
-
-      affinity:
-        podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-          - weight: 100
-            podAffinityTerm:
-              topologyKey: kubernetes.io/hostname
-              labelSelector:
-                matchLabels:
-                  app: {{ include "cassandra.fullname" . }}
-
       resources:
         requests:
           cpu: {{ .Values.cluster.resources.requests.cpu }}
