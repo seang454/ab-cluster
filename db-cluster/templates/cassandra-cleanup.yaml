@@ -5,14 +5,16 @@
 {{- $config := dig "cluster" "config" dict $cassandra -}}
 {{- $legacyCluster := "seang-cassandra" -}}
 {{- $legacyDatacenter := "dc1" -}}
+{{- $legacyLongDatacenter := printf "%s-dc1" .Release.Name -}}
 {{- $clusterName := printf "%s-cassandra" .Release.Name -}}
 {{- $configuredCluster := get $config "clusterName" | default "" -}}
 {{- if and $configuredCluster (ne $configuredCluster $legacyCluster) -}}
 {{- $clusterName = $configuredCluster -}}
 {{- end -}}
-{{- $datacenter := printf "%s-dc1" .Release.Name -}}
+{{- $releaseSuffix := regexFind "[^-]+$" .Release.Name | default .Release.Name -}}
+{{- $datacenter := printf "dc-%s" $releaseSuffix -}}
 {{- $configuredDatacenter := get $config "datacenter" | default "" -}}
-{{- if and $configuredDatacenter (ne $configuredDatacenter $legacyDatacenter) -}}
+{{- if and $configuredDatacenter (ne $configuredDatacenter $legacyDatacenter) (ne $configuredDatacenter $legacyLongDatacenter) -}}
 {{- $datacenter = $configuredDatacenter -}}
 {{- end -}}
 {{- $namespace := .Release.Namespace -}}

@@ -5,14 +5,16 @@
 {{- $cassandraConfig := dig "cluster" "config" dict $cassandra -}}
 {{- $legacyCassandraCluster := "seang-cassandra" -}}
 {{- $legacyCassandraDatacenter := "dc1" -}}
+{{- $legacyLongCassandraDatacenter := printf "%s-dc1" .Release.Name -}}
 {{- $configuredCassandraCluster := get $cassandraConfig "clusterName" | default "" -}}
 {{- $configuredCassandraDatacenter := get $cassandraConfig "datacenter" | default "" -}}
 {{- $cassandraCluster := printf "%s-cassandra" .Release.Name -}}
 {{- if and $configuredCassandraCluster (ne $configuredCassandraCluster $legacyCassandraCluster) -}}
 {{- $cassandraCluster = $configuredCassandraCluster -}}
 {{- end -}}
-{{- $cassandraDatacenter := printf "%s-dc1" .Release.Name -}}
-{{- if and $configuredCassandraDatacenter (ne $configuredCassandraDatacenter $legacyCassandraDatacenter) -}}
+{{- $releaseSuffix := regexFind "[^-]+$" .Release.Name | default .Release.Name -}}
+{{- $cassandraDatacenter := printf "dc-%s" $releaseSuffix -}}
+{{- if and $configuredCassandraDatacenter (ne $configuredCassandraDatacenter $legacyCassandraDatacenter) (ne $configuredCassandraDatacenter $legacyLongCassandraDatacenter) -}}
 {{- $cassandraDatacenter = $configuredCassandraDatacenter -}}
 {{- end -}}
 {{- $mongoExt := .Values.mongodb.externalAccess | default dict -}}

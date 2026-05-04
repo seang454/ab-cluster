@@ -31,13 +31,15 @@
 
 {{- define "cassandra.datacenter" -}}
 {{- $values := .Values | default dict -}}
-{{- $defaultDc := printf "%s-dc1" .Release.Name | trunc 63 | trimSuffix "-" -}}
+{{- $releaseSuffix := regexFind "[^-]+$" .Release.Name | default .Release.Name -}}
+{{- $defaultDc := printf "dc-%s" $releaseSuffix | trunc 63 | trimSuffix "-" -}}
 {{- $legacyDc := "dc1" -}}
+{{- $legacyLongDc := printf "%s-dc1" .Release.Name -}}
 {{- if hasKey $values "cluster" -}}
 {{- $cluster := get $values "cluster" | default dict -}}
 {{- $config := get $cluster "config" | default dict -}}
 {{- $configured := get $config "datacenter" | default "" -}}
-{{- if or (eq $configured "") (eq $configured $legacyDc) -}}
+{{- if or (eq $configured "") (eq $configured $legacyDc) (eq $configured $legacyLongDc) -}}
 {{- $defaultDc -}}
 {{- else -}}
 {{- $configured -}}
@@ -47,7 +49,7 @@
 {{- $cluster := get $cassandra "cluster" | default dict -}}
 {{- $config := get $cluster "config" | default dict -}}
 {{- $configured := get $config "datacenter" | default "" -}}
-{{- if or (eq $configured "") (eq $configured $legacyDc) -}}
+{{- if or (eq $configured "") (eq $configured $legacyDc) (eq $configured $legacyLongDc) -}}
 {{- $defaultDc -}}
 {{- else -}}
 {{- $configured -}}
