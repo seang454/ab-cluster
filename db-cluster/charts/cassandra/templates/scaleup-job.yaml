@@ -1,5 +1,7 @@
 {{- $targetInstances := int (default 1 .Values.cluster.instances) }}
-{{- if gt $targetInstances 1 }}
+{{- $sequentialScaleupConfig := get (.Values.cluster | default dict) "sequentialScaleup" | default dict }}
+{{- $sequentialScaleup := get $sequentialScaleupConfig "enabled" | default false }}
+{{- if and $sequentialScaleup (gt $targetInstances 1) }}
 apiVersion: batch/v1
 kind: Job
 metadata:

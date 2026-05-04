@@ -9,7 +9,6 @@ metadata:
 {{- $clusterConfig := .Values.cluster.config | default dict }}
 {{- $jvmOptions := get $clusterConfig "jvmOptions" | default dict }}
 {{- $targetInstances := int (default 1 .Values.cluster.instances) }}
-{{- $bootstrapInstances := ternary 1 $targetInstances (gt $targetInstances 1) }}
 spec:
   cassandra:
     serverVersion: "4.1.3"
@@ -76,7 +75,7 @@ spec:
     datacenters:
     - metadata:
         name: {{ include "cassandra.datacenter" . }}
-      size: {{ $bootstrapInstances }}
+      size: {{ $targetInstances }}
       containers:
       - name: cassandra
         livenessProbe:
