@@ -309,9 +309,8 @@ mongodb:
   # connection handling instead of a PostgreSQL Pooler CRD.
   enabled: false
   # MongoDB replica-set self-identification must match the kubelet-managed pod
-  # FQDN domain. In this cluster that domain is `k8scluster`, even though some
-  # other components also resolve `benzcluster`.
-  clusterServiceDNSSuffix: k8scluster
+  # FQDN domain. This cluster's pod FQDNs resolve under `svc.benzcluster`.
+  clusterServiceDNSSuffix: benzcluster
   clusterServiceDNSMode: Internal
   # MongoDB connection handling stays driver/operator-native. Use replica set
   # services internally and split horizons when external member endpoints are
@@ -358,6 +357,9 @@ mongodb:
     # public hostnames plus internal service DNS names.
     enabled: true
     mode: certManager
+    # The Percona MongoDB operator manages MongoDB TLS certificates itself.
+    # Keep this false so Helm does not race the operator for the same secrets.
+    renderCertificates: false
     sslSecretName: ""
     sslInternalSecretName: ""
     certManager:
@@ -409,7 +411,7 @@ mongodb:
       # MongoDB replica set bootstrap and user creation can take several
       # minutes on Longhorn. The operator defaults are too aggressive and can
       # push the pods into a restart loop before initialization settles.
-      livenessInitialDelaySeconds: 300
+      livenessInitialDelaySeconds: 1800
       livenessTimeoutSeconds: 30
       livenessPeriodSeconds: 30
       livenessFailureThreshold: 10

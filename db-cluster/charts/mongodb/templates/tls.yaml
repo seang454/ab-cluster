@@ -4,7 +4,7 @@
 {{- $ext := .Values.externalAccess | default dict -}}
 {{- $instances := int (.Values.cluster.instances | default 3) -}}
 {{- $clusterServiceDNSSuffix := .Values.clusterServiceDNSSuffix | default "" -}}
-{{- if and $tls.enabled (eq ($tls.mode | default "certManager") "certManager") }}
+{{- if and $tls.enabled ($tls.renderCertificates | default false) (eq ($tls.mode | default "certManager") "certManager") }}
 {{- if $generateCA }}
 apiVersion: cert-manager.io/v1
 kind: Issuer
