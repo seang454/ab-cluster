@@ -4,8 +4,9 @@ metadata:
   name: {{ include "redis.fullname" . }}
   namespace: {{ .Release.Namespace }}
 {{- $tls := .Values.tls | default dict }}
+{{- $connection := .Values.connection | default dict }}
 {{- $auth := .Values.auth | default dict }}
-{{- $redisPassword := get $auth "password" | default "" }}
+{{- $redisPassword := required "redis.connection.password must be set for the client database user" (get $connection "password" | default (get $auth "password" | default "")) }}
 {{- $monitoring := .Values.monitoring | default dict }}
 {{- $serviceMonitor := get $monitoring "serviceMonitor" | default dict }}
 spec:

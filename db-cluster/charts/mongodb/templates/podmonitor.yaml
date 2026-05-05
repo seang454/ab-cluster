@@ -1,3 +1,4 @@
+{{- if and (.Values.monitoring.enabled | default false) (.Values.monitoring.exporter.enabled | default false) (.Values.monitoring.podMonitor.enabled | default false) }}
 apiVersion: monitoring.coreos.com/v1
 kind: PodMonitor
 metadata:
@@ -24,3 +25,4 @@ spec:
       path: /metrics
       interval: {{ (.Values.monitoring.podMonitor.interval | default "30s") | quote }}
       scrapeTimeout: {{ (.Values.monitoring.podMonitor.scrapeTimeout | default "10s") | quote }}
+{{- end }}

@@ -5,6 +5,10 @@ mongodb:
   enabled: true
   operator:
     enabled: false
+  connection:
+    username: databaseAdmin
+    password: "65c2a9a8bec595864b8dd6627b4ab47e"
+    port: 17017
   unsafeFlags:
     replsetSize: true
   clusterServiceDNSSuffix: k8scluster
@@ -27,3 +31,9 @@ mongodb:
     backupUser: backup
     backupPassword: "3ebe0691ae38ed7963cb4f0de52f90d0"
     replicationKey: "8c0949e56a809521d621a91082a36101a566d3e48fb9560bdd990552ab1cc7cf"
+  monitoring:
+    enabled: false
+    exporter:
+      enabled: false
+    podMonitor:
+      enabled: false

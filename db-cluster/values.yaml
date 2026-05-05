@@ -116,8 +116,14 @@ postgresql:
     mode: pooler
   operator:
     enabled: false
+  connection:
+    username: appuser
+    password: ""
+    port: 15432
   credentials:
-    superuser: ""
+    # Internal/operator credentials can stay at chart defaults. The application
+    # user should be supplied through postgresql.connection.
+    superuser: "PostgresInternalChangeMe123!"
     admin: ""
     standby: ""
   externalAccess:
@@ -172,6 +178,8 @@ postgresql:
 
     bootstrap:
       database: appdb
+      # Kept for backward compatibility. postgresql.connection.username is used
+      # for new request-driven deployments.
       owner: appuser
       encoding: UTF8
 
@@ -313,18 +321,24 @@ mongodb:
     mode: driver
   operator:
     enabled: false
+  connection:
+    username: databaseAdmin
+    password: ""
+    port: 17017
   credentials:
     clusterAdminUser: clusterAdmin
-    clusterAdminPassword: ""
+    clusterAdminPassword: "MongoClusterAdminChangeMe123!"
     userAdminUser: userAdmin
-    userAdminPassword: ""
+    userAdminPassword: "MongoUserAdminChangeMe123!"
     clusterMonitorUser: clusterMonitor
-    clusterMonitorPassword: ""
+    clusterMonitorPassword: "MongoClusterMonitorChangeMe123!"
+    # Kept for backward compatibility. mongodb.connection.username/password is
+    # used for the request-facing database admin account.
     databaseAdminUser: databaseAdmin
     databaseAdminPassword: ""
     backupUser: backup
-    backupPassword: ""
-    replicationKey: ""
+    backupPassword: "MongoBackupChangeMe123!"
+    replicationKey: "MongoReplicationKeyChangeMe1234567890"
   externalAccess:
     # Enable split-horizon external access by default for MongoDB so clients can
     # connect through the TCP proxy using public member hostnames on port 27017.
@@ -478,11 +492,17 @@ mysql:
     mode: haproxy
   operator:
     enabled: false
+  connection:
+    username: appuser
+    password: ""
+    port: 13306
   credentials:
-    rootPassword: ""
-    replicationPassword: ""
-    monitorPassword: ""
-    clusterCheckPassword: ""
+    # Internal/operator credentials can stay at chart defaults. The application
+    # user should be supplied through mysql.connection.
+    rootPassword: "MysqlRootChangeMe123!"
+    replicationPassword: "MysqlReplicationChangeMe123!"
+    monitorPassword: "MysqlMonitorChangeMe123!"
+    clusterCheckPassword: "MysqlClusterCheckChangeMe123!"
   externalAccess:
     # External hostnames are only used when the database is intentionally public.
     enabled: true
@@ -634,7 +654,14 @@ redis:
     mode: client
   operator:
     enabled: false
+  connection:
+    username: default
+    password: ""
+    port: 16379
   auth:
+    # Kept for backward compatibility. redis.connection.password is used for
+    # new request-driven deployments.
+    username: default
     password: ""
   externalAccess:
     # Public hostname for Redis when exposing it outside the cluster.
@@ -744,7 +771,13 @@ cassandra:
     mode: driver
   operator:
     enabled: false
+  connection:
+    username: cassandra
+    password: ""
+    port: 19042
   credentials:
+    # Kept for backward compatibility. cassandra.connection is used for new
+    # request-driven deployments.
     username: cassandra
     password: ""
   externalAccess:

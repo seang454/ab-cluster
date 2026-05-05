@@ -1,6 +1,8 @@
 {{- $tls := .Values.tls | default dict -}}
+{{- $connection := .Values.connection | default dict -}}
 {{- $auth := .Values.auth | default dict -}}
-{{- $redisPassword := get $auth "password" | default "" -}}
+{{- $redisUsername := get $connection "username" | default (get $auth "username" | default "default") -}}
+{{- $redisPassword := required "redis.connection.password must be set for the client database user" (get $connection "password" | default (get $auth "password" | default "")) -}}
 {{- if or $tls.enabled $redisPassword }}
 apiVersion: v1
 kind: ConfigMap
@@ -26,5 +28,8 @@ data:
     {{- if $redisPassword }}
     requirepass {{ $redisPassword }}
     masterauth {{ $redisPassword }}
+    {{- if ne $redisUsername "default" }}
+    user {{ $redisUsername }} on >{{ $redisPassword }} ~* &* +@all
+    {{- end }}
     {{- end }}
 {{- end }}

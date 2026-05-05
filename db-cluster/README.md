@@ -149,16 +149,19 @@ helm upgrade --install my-db ./db-cluster/ \
 ## Values
 
 The default `values.yaml` keeps all databases disabled. Enable only the
-databases you need and fill in the credential fields that apply to them.
+database you need and fill in the client-facing `connection` fields supplied by
+the user. Internal/operator credentials keep chart defaults unless you are
+intentionally rotating them.
 
 Example:
 
 ```yaml
 postgresql:
   enabled: true
-  credentials:
-    superuser: "YourSecurePassword!"
-    admin: "YourSecurePassword!"
+  connection:
+    username: "appuser"
+    password: "ClientSuppliedPassword123!"
+    port: 15432
   backup:
     schedule:
       enabled: true
@@ -166,13 +169,10 @@ postgresql:
 
 mongodb:
   enabled: true
-  credentials:
-    clusterAdminPassword: "YourSecurePassword!"
-    userAdminPassword: "YourSecurePassword!"
-    clusterMonitorPassword: "YourSecurePassword!"
-    databaseAdminPassword: "YourSecurePassword!"
-    backupPassword: "YourSecurePassword!"
-    replicationKey: "YourSecureKey!"
+  connection:
+    username: "databaseAdmin"
+    password: "ClientSuppliedPassword123!"
+    port: 17017
   externalAccess:
     enabled: true
     publicHostnames:
@@ -190,21 +190,34 @@ mongodb:
 
 mysql:
   enabled: true
-  credentials:
-    rootPassword: "YourSecurePassword!"
-    replicationPassword: "YourSecurePassword!"
-    monitorPassword: "YourSecurePassword!"
-    clusterCheckPassword: "YourSecurePassword!"
+  connection:
+    username: "appuser"
+    password: "ClientSuppliedPassword123!"
+    port: 13306
 
 redis:
   enabled: true
-  auth:
-    password: "YourSecurePassword!"
+  connection:
+    username: "default"
+    password: "ClientSuppliedPassword123!"
+    port: 16379
 
 cassandra:
   enabled: true
-  credentials:
-    password: "YourSecurePassword!"
+  connection:
+    username: "cassandra"
+    password: "ClientSuppliedPassword123!"
+    port: 19042
+```
+
+The user-facing request contract for this flow lives in the Spring backend
+Postman collection at `../spring/a8s-backend/postman/db-cluster.postman_collection.json`.
+Spring should map:
+
+```text
+request.connection.username -> <database>.connection.username
+request.connection.password -> <database>.connection.password
+request.connection.port     -> <database>.connection.port
 ```
 
 For MongoDB replica-set clients connecting through the TCP proxy, use all

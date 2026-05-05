@@ -6,6 +6,8 @@
 {{- $horizonsEnabled := and ($ext.enabled | default false) ($horizons.enabled | default false) (eq (len $publicHosts) $instances) -}}
 {{- $mongodbBackupSecretName := .Values.backup.s3.credentialSecret | default (printf "minio-credentials-%s" .Release.Name) -}}
 {{- $clusterServiceDNSSuffix := .Values.clusterServiceDNSSuffix | default "" -}}
+{{- $exporterEnabled := and (.Values.monitoring.enabled | default false) (.Values.monitoring.exporter.enabled | default false) -}}
+{{- $customSidecars := .Values.cluster.sidecars | default list -}}
 apiVersion: psmdb.percona.com/v1
 kind: PerconaServerMongoDB
 metadata:
@@ -38,8 +40,10 @@ spec:
   replsets:
   - name: rs0
     size: {{ $instances }}
+    {{- if $exporterEnabled }}
     labels:
       monitoring.seang.shop/mongodb-exporter: "true"
+    {{- end }}
     {{- with .Values.cluster.env }}
     env:
       {{- toYaml . | nindent 4 }}
@@ -48,11 +52,12 @@ spec:
     configuration: |
       {{- . | nindent 6 }}
     {{- end }}
-    {{- if .Values.cluster.sidecars }}
+    {{- if or (gt (len $customSidecars) 0) $exporterEnabled }}
     sidecars:
-      {{- with .Values.cluster.sidecars }}
+      {{- with $customSidecars }}
       {{- toYaml . | nindent 4 }}
       {{- end }}
+      {{- if $exporterEnabled }}
     - name: mongodb-exporter
       image: {{ (.Values.monitoring.exporter.image | default "percona/mongodb_exporter:0.40") | quote }}
       imagePullPolicy: IfNotPresent
@@ -77,6 +82,7 @@ spec:
       {{- with .Values.monitoring.exporter.resources }}
       resources:
         {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- end }}
     {{- end }}
     {{- if $horizonsEnabled }}

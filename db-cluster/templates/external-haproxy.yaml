@@ -23,9 +23,19 @@
 {{- $mongoHorizons := get $mongoExt "replicaSetHorizons" | default dict -}}
 {{- $mongoPublicHosts := $mongoExt.publicHostnames | default list -}}
 {{- $mongoCluster := .Values.mongodb.cluster | default dict -}}
+{{- $mongoConnection := .Values.mongodb.connection | default dict -}}
+{{- $mongoPort := get $mongoConnection "port" | default (get $ports "mongodb" | default 27017) -}}
 {{- $mongoInstances := int (get $mongoCluster "instances" | default 1) -}}
 {{- $mongoHorizonsEnabled := and .Values.mongodb.enabled ($expose.mongodb | default true) ($mongoExt.enabled | default false) ($mongoHorizons.enabled | default false) (gt (len $mongoPublicHosts) 0) -}}
 {{- $pg := .Values.postgresql | default dict -}}
+{{- $pgConnection := get $pg "connection" | default dict -}}
+{{- $pgPort := get $pgConnection "port" | default (get $ports "postgresql" | default 5432) -}}
+{{- $mysqlConnection := .Values.mysql.connection | default dict -}}
+{{- $mysqlPort := get $mysqlConnection "port" | default (get $ports "mysql" | default 3306) -}}
+{{- $redisConnection := .Values.redis.connection | default dict -}}
+{{- $redisPort := get $redisConnection "port" | default (get $ports "redis" | default 6379) -}}
+{{- $cassandraConnection := get $cassandra "connection" | default dict -}}
+{{- $cassandraPort := get $cassandraConnection "port" | default (get $ports "cassandra" | default 9042) -}}
 {{- $pgProxy := get $proxy "postgresql" | default dict -}}
 {{- $kubeClusterDomain := get $proxy "kubeClusterDomain" | default "" -}}
 {{- $svcSuffix := "svc" -}}
@@ -71,7 +81,7 @@ data:
     {{- if and .Values.postgresql.enabled ($expose.postgresql | default true) }}
     # Public PostgreSQL listener -> internal CNPG read-write service.
     frontend postgresql_frontend
-      bind *:{{ $ports.postgresql | default 5432 }}
+      bind *:{{ $pgPort }}
       default_backend postgresql_backend
 
     backend postgresql_backend
@@ -84,7 +94,7 @@ data:
     {{- if and .Values.mysql.enabled ($expose.mysql | default true) }}
     # Public MySQL listener -> internal MySQL HAProxy service managed by PXC.
     frontend mysql_frontend
-      bind *:{{ $ports.mysql | default 3306 }}
+      bind *:{{ $mysqlPort }}
       default_backend mysql_backend
 
     backend mysql_backend
@@ -94,7 +104,7 @@ data:
     {{- if $mongoHorizonsEnabled }}
     # Public MongoDB listener for replica-set members selected by TLS SNI.
     frontend mongodb_frontend
-      bind *:{{ $ports.mongodb | default 27017 }}
+      bind *:{{ $mongoPort }}
       tcp-request inspect-delay 5s
       tcp-request content accept if { req.ssl_hello_type 1 }
       {{- range $i, $host := $mongoPublicHosts }}
@@ -112,7 +122,7 @@ data:
     {{- else if and .Values.mongodb.enabled ($expose.mongodb | default true) }}
     # Public MongoDB listener -> internal replica set service.
     frontend mongodb_frontend
-      bind *:{{ $ports.mongodb | default 27017 }}
+      bind *:{{ $mongoPort }}
       default_backend mongodb_backend
 
     backend mongodb_backend
@@ -122,7 +132,7 @@ data:
     {{- if and .Values.redis.enabled ($expose.redis | default true) }}
     # Public Redis listener -> internal Redis leader service.
     frontend redis_frontend
-      bind *:{{ $ports.redis | default 6379 }}
+      bind *:{{ $redisPort }}
       default_backend redis_backend
 
     backend redis_backend
@@ -132,7 +142,7 @@ data:
     {{- if and .Values.cassandra.enabled ($expose.cassandra | default true) }}
     # Public Cassandra listener -> internal Cassandra service.
     frontend cassandra_frontend
-      bind *:{{ $ports.cassandra | default 9042 }}
+      bind *:{{ $cassandraPort }}
       default_backend cassandra_backend
 
     backend cassandra_backend
@@ -187,31 +197,31 @@ spec:
         ports:
         {{- if and .Values.postgresql.enabled ($expose.postgresql | default true) }}
         - name: postgresql
-          containerPort: {{ $ports.postgresql | default 5432 }}
+          containerPort: {{ $pgPort }}
           protocol: TCP
         {{- end }}
         {{- if and .Values.mysql.enabled ($expose.mysql | default true) }}
         - name: mysql
-          containerPort: {{ $ports.mysql | default 3306 }}
+          containerPort: {{ $mysqlPort }}
           protocol: TCP
         {{- end }}
         {{- if $mongoHorizonsEnabled }}
         - name: mongodb
-          containerPort: {{ $ports.mongodb | default 27017 }}
+          containerPort: {{ $mongoPort }}
           protocol: TCP
         {{- else if and .Values.mongodb.enabled ($expose.mongodb | default true) }}
         - name: mongodb
-          containerPort: {{ $ports.mongodb | default 27017 }}
+          containerPort: {{ $mongoPort }}
           protocol: TCP
         {{- end }}
         {{- if and .Values.redis.enabled ($expose.redis | default true) }}
         - name: redis
-          containerPort: {{ $ports.redis | default 6379 }}
+          containerPort: {{ $redisPort }}
           protocol: TCP
         {{- end }}
         {{- if and .Values.cassandra.enabled ($expose.cassandra | default true) }}
         - name: cassandra
-          containerPort: {{ $ports.cassandra | default 9042 }}
+          containerPort: {{ $cassandraPort }}
           protocol: TCP
         {{- end }}
         {{- with $proxy.resources }}
@@ -241,37 +251,37 @@ spec:
   ports:
   {{- if and .Values.postgresql.enabled ($expose.postgresql | default true) }}
   - name: postgresql
-    port: {{ $ports.postgresql | default 5432 }}
-    targetPort: {{ $ports.postgresql | default 5432 }}
+    port: {{ $pgPort }}
+    targetPort: {{ $pgPort }}
     protocol: TCP
   {{- end }}
   {{- if and .Values.mysql.enabled ($expose.mysql | default true) }}
   - name: mysql
-    port: {{ $ports.mysql | default 3306 }}
-    targetPort: {{ $ports.mysql | default 3306 }}
+    port: {{ $mysqlPort }}
+    targetPort: {{ $mysqlPort }}
     protocol: TCP
   {{- end }}
   {{- if $mongoHorizonsEnabled }}
   - name: mongodb
-    port: {{ $ports.mongodb | default 27017 }}
-    targetPort: {{ $ports.mongodb | default 27017 }}
+    port: {{ $mongoPort }}
+    targetPort: {{ $mongoPort }}
     protocol: TCP
   {{- else if and .Values.mongodb.enabled ($expose.mongodb | default true) }}
   - name: mongodb
-    port: {{ $ports.mongodb | default 27017 }}
-    targetPort: {{ $ports.mongodb | default 27017 }}
+    port: {{ $mongoPort }}
+    targetPort: {{ $mongoPort }}
     protocol: TCP
   {{- end }}
   {{- if and .Values.redis.enabled ($expose.redis | default true) }}
   - name: redis
-    port: {{ $ports.redis | default 6379 }}
-    targetPort: {{ $ports.redis | default 6379 }}
+    port: {{ $redisPort }}
+    targetPort: {{ $redisPort }}
     protocol: TCP
   {{- end }}
   {{- if and .Values.cassandra.enabled ($expose.cassandra | default true) }}
   - name: cassandra
-    port: {{ $ports.cassandra | default 9042 }}
-    targetPort: {{ $ports.cassandra | default 9042 }}
+    port: {{ $cassandraPort }}
+    targetPort: {{ $cassandraPort }}
     protocol: TCP
   {{- end }}
 {{- end }}

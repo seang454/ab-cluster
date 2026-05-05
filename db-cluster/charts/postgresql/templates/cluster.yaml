@@ -4,6 +4,7 @@ metadata:
   name: {{ include "postgresql.fullname" . }}
   namespace: {{ .Release.Namespace }}
 {{- $ext := .Values.externalAccess | default dict }}
+{{- $connection := .Values.connection | default dict }}
 {{- $externalIPs := list -}}
 {{- $postgresBackupSecretName := .Values.backup.s3Credentials.accessKeyId.secretName | default (printf "minio-credentials-%s" .Release.Name) -}}
 {{- if $ext.externalIP }}
@@ -45,7 +46,7 @@ spec:
   bootstrap:
     initdb:
       database: {{ .Values.cluster.bootstrap.database }}
-      owner: {{ .Values.cluster.bootstrap.owner }}
+      owner: {{ (get $connection "username" | default .Values.cluster.bootstrap.owner) | quote }}
       secret:
         name: {{ include "postgresql.appSecretName" . }}
       encoding: {{ .Values.cluster.bootstrap.encoding }}

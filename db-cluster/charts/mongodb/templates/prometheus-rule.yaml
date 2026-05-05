@@ -1,3 +1,4 @@
+{{- if .Values.alerts.enabled }}
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
@@ -75,3 +76,4 @@ spec:
       annotations:
         summary: "MongoDB PVC usage is above {{ .Values.alerts.storage.criticalPercent }}%"
         description: "PVC {{ `{{ $labels.persistentvolumeclaim }}` }} in namespace {{ `{{ $labels.namespace }}` }} is {{ `{{ $value | printf \"%.1f\" }}` }}% full. Immediate action is required."
+{{- end }}
