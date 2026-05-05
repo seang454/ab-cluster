@@ -655,13 +655,13 @@ redis:
   operator:
     enabled: false
   connection:
-    username: default
+    username: redis
     password: ""
     port: 16379
   auth:
     # Kept for backward compatibility. redis.connection.password is used for
     # new request-driven deployments.
-    username: default
+    username: redis
     password: ""
   externalAccess:
     # Public hostname for Redis when exposing it outside the cluster.
