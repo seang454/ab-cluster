@@ -2179,22 +2179,11 @@ upgrade() {
         --set "redis.operator.enabled=false" \
         --set "cassandra.operator.enabled=false" \
         --set "vaultTransit.enabled=false" \
-        --set "vault.postgresql.superuserPassword=$PG_PASS" \
-        --set "vault.postgresql.appPassword=$PG_PASS" \
-        --set "mongodb.credentials.clusterAdminPassword=$MONGO_PASS" \
-        --set "mongodb.credentials.userAdminPassword=$MONGO_PASS" \
-        --set "mongodb.credentials.clusterMonitorPassword=$MONGO_PASS" \
-        --set "mongodb.credentials.databaseAdminPassword=$MONGO_PASS" \
-        --set "mongodb.credentials.backupPassword=$MONGO_PASS" \
-        --set "mongodb.credentials.replicationKey=$MONGO_PASS" \
-        --set "vault.mysql.rootPassword=$MYSQL_PASS" \
-        --set "vault.mysql.appPassword=$MYSQL_PASS" \
-        --set "vault.mysql.replicationPassword=$MYSQL_PASS" \
-        --set "vault.mysql.monitorPassword=$MYSQL_PASS" \
-        --set "vault.mysql.clusterCheckPassword=$MYSQL_PASS" \
-        --set "vault.redis.password=$REDIS_PASS" \
-        --set "redis.auth.password=$REDIS_PASS" \
-        --set "vault.cassandra.password=$CASS_PASS" \
+        --set "postgresql.connection.password=$PG_PASS" \
+        --set "mongodb.connection.password=$MONGO_PASS" \
+        --set "mysql.connection.password=$MYSQL_PASS" \
+        --set "redis.connection.password=$REDIS_PASS" \
+        --set "cassandra.connection.password=$CASS_PASS" \
         --timeout 10m \
         || die "Upgrade failed"
     prune_disabled_database_operators
