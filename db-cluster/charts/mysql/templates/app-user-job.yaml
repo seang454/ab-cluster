@@ -1,0 +1,57 @@
+{{- $connection := .Values.connection | default dict -}}
+{{- $appUsername := (get $connection "username" | default "appuser") -}}
+{{- $appPassword := required "mysql.connection.password must be set for the client database user" (get $connection "password" | default "") -}}
+{{- $appDatabase := required "mysql.connection.database must be set for the client database" (get $connection "database" | default "") -}}
+{{- $jobHash := printf "%s:%s:%s" $appUsername $appPassword $appDatabase | sha256sum | trunc 10 -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "mysql.fullname" . }}-app-user-{{ $jobHash }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: mysql
+    app.kubernetes.io/instance: {{ include "mysql.fullname" . }}
+    app.kubernetes.io/component: app-user-bootstrap
+spec:
+  backoffLimit: 12
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mysql
+        app.kubernetes.io/instance: {{ include "mysql.fullname" . }}
+        app.kubernetes.io/component: app-user-bootstrap
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: app-user-bootstrap
+          image: {{ .Values.cluster.image | quote }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: MYSQL_HOST
+              value: {{ printf "%s-haproxy" (include "mysql.fullname" .) | quote }}
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mysql.secretName" . }}
+                  key: root
+          command:
+            - /bin/bash
+            - -ec
+            - |
+              for attempt in $(seq 1 120); do
+                if mysql -h "${MYSQL_HOST}" -uroot -p"${MYSQL_ROOT_PASSWORD}" -e "SELECT 1" >/dev/null 2>&1; then
+                  mysql -h "${MYSQL_HOST}" -uroot -p"${MYSQL_ROOT_PASSWORD}" < /etc/mysql/init-file/init-users.sql
+                  exit 0
+                fi
+                sleep 5
+              done
+              echo "Timed out waiting for MySQL to accept root connections" >&2
+              exit 1
+          volumeMounts:
+            - name: mysql-init
+              mountPath: /etc/mysql/init-file
+              readOnly: true
+      volumes:
+        - name: mysql-init
+          secret:
+            secretName: {{ .Release.Name }}-mysql-init
