@@ -53,7 +53,7 @@ spec:
           {{- toYaml . | nindent 10 }}
         {{- end }}
     {{- with .Values.cluster.probes }}
-    readinessDelaySec: {{ .readinessDelaySeconds | default 60 }}
+    readinessDelaySec: {{ .readinessDelaySeconds | default 900 }}
     readinessProbes:
       timeoutSeconds: {{ .readinessTimeoutSeconds | default 15 }}
     livenessDelaySec: {{ .livenessDelaySeconds | default 1200 }}

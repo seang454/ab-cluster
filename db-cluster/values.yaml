@@ -534,8 +534,8 @@ mysql:
     # The Percona operator enforces at least two HAProxy replicas as a safe
     # default. Match that here to avoid endless reconciliation churn.
     size: 2
-    # Readiness can fail safely while PXC is bootstrapping. Keep liveness long
-    # but let HAProxy become ready soon after a backend is available.
+    # Readiness can fail safely while PXC is bootstrapping. Keep HAProxy's
+    # service endpoint available soon after a backend is usable.
     readinessDelaySeconds: 120
     readinessTimeoutSeconds: 15
     livenessDelaySeconds: 1800
@@ -575,9 +575,9 @@ mysql:
     affinity: {}
     probes:
       # Longhorn-backed initial bootstrap can take several minutes. Give the
-      # first PXC node enough time to finish initializing before kubelet
-      # liveness checks kill it and force a full restart.
-      readinessDelaySeconds: 120
+      # PXC admin interface on 33062 enough time to open before readiness probes
+      # start, otherwise kubelet records noisy expected startup warnings.
+      readinessDelaySeconds: 900
       readinessTimeoutSeconds: 20
       livenessDelaySeconds: 1800
       livenessTimeoutSeconds: 20
