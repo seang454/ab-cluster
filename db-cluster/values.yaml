@@ -250,6 +250,7 @@ postgresql:
       # Every 6 hours:      0 0 */6 * * *
       # Weekly at Sun 03:00 UTC: 0 0 3 * * 0
       cron: "0 0 2 * * *"
+      timeZone: UTC
       immediate: false
       suspend: false
       backupOwnerReference: self
@@ -443,6 +444,7 @@ mongodb:
     task:
       name: daily-backup
       schedule: "10 2 * * *"
+      timeZone: UTC
       compressionType: gzip
     s3:
       bucket: "{{ .Release.Namespace }}"
@@ -602,6 +604,7 @@ mysql:
     schedule:
       name: daily-backup
       cron: "20 2 * * *"
+      timeZone: UTC
       keep: 7
     s3:
       bucket: "{{ .Release.Namespace }}"
@@ -725,6 +728,7 @@ redis:
     schedule:
       enabled: true
       cron: "40 2 * * *"
+      timeZone: UTC
     s3:
       bucket: "{{ .Release.Namespace }}"
       credentialSecret: ""
@@ -879,6 +883,7 @@ cassandra:
     schedule:
       enabled: true
       cron: "30 3 * * *"
+      timeZone: UTC
       disabled: false
       backupType: differential
     s3:
