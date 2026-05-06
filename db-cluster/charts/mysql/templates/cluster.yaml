@@ -131,7 +131,7 @@ spec:
     {{- with .Values.haproxy }}
     size: {{ .size | default 1 }}
     image: percona/percona-xtradb-cluster-operator:1.14.0-haproxy
-    readinessDelaySec: {{ .readinessDelaySeconds | default 15 }}
+    readinessDelaySec: {{ .readinessDelaySeconds | default 900 }}
     readinessProbes:
       timeoutSeconds: {{ .readinessTimeoutSeconds | default 5 }}
     livenessDelaySec: {{ .livenessDelaySeconds | default 60 }}
@@ -144,7 +144,7 @@ spec:
     {{- else }}
     size: 1
     image: percona/percona-xtradb-cluster-operator:1.14.0-haproxy
-    readinessDelaySec: 15
+    readinessDelaySec: 900
     readinessProbes:
       timeoutSeconds: 5
     livenessDelaySec: 60

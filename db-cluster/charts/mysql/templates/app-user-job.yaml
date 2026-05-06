@@ -38,7 +38,7 @@ spec:
             - /bin/bash
             - -ec
             - |
-              for attempt in $(seq 1 120); do
+              for attempt in $(seq 1 360); do
                 if mysql -h "${MYSQL_HOST}" -uroot -p"${MYSQL_ROOT_PASSWORD}" -e "SELECT 1" >/dev/null 2>&1; then
                   mysql -h "${MYSQL_HOST}" -uroot -p"${MYSQL_ROOT_PASSWORD}" < /etc/mysql/init-file/init-users.sql
                   exit 0

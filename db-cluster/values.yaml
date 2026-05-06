@@ -534,9 +534,10 @@ mysql:
     # The Percona operator enforces at least two HAProxy replicas as a safe
     # default. Match that here to avoid endless reconciliation churn.
     size: 2
-    # Readiness can fail safely while PXC is bootstrapping. Keep HAProxy's
-    # service endpoint available soon after a backend is usable.
-    readinessDelaySeconds: 120
+    # Readiness can fail safely while PXC is bootstrapping. Delay HAProxy
+    # readiness until PXC has had enough time to expose a stable backend,
+    # avoiding noisy "reading initial communication packet" startup warnings.
+    readinessDelaySeconds: 900
     readinessTimeoutSeconds: 15
     livenessDelaySeconds: 1800
     livenessTimeoutSeconds: 15
