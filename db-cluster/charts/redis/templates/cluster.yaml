@@ -6,7 +6,23 @@ metadata:
 {{- $tls := .Values.tls | default dict }}
 {{- $connection := .Values.connection | default dict }}
 {{- $auth := .Values.auth | default dict }}
-{{- $redisPassword := required "redis.connection.password must be set for the client database user" (get $connection "password" | default (get $auth "password" | default "")) }}
+{{- $externalSecretRef := .Values.externalSecretRef | default "" }}
+{{- $redisPassword := get $connection "password" | default (get $auth "password" | default "") }}
+{{- if $externalSecretRef }}
+{{- $existingSecret := lookup "v1" "Secret" .Release.Namespace $externalSecretRef -}}
+{{- if $existingSecret }}
+{{- $secretData := get $existingSecret "data" | default dict -}}
+{{- $secretPassword := get $secretData "password" | default "" -}}
+{{- if not $secretPassword }}
+{{- fail (printf "redis.externalSecretRef secret %q must contain a password key" $externalSecretRef) -}}
+{{- end }}
+{{- $redisPassword = $secretPassword | b64dec -}}
+{{- else if not $redisPassword }}
+{{- fail (printf "redis.externalSecretRef secret %q was not found in namespace %q and no redis.connection.password fallback was provided" $externalSecretRef .Release.Namespace) -}}
+{{- end }}
+{{- else }}
+{{- $redisPassword = required "redis.connection.password must be set for the client database user when redis.externalSecretRef is empty" $redisPassword }}
+{{- end }}
 {{- $monitoring := .Values.monitoring | default dict }}
 {{- $serviceMonitor := get $monitoring "serviceMonitor" | default dict }}
 spec:

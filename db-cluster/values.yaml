@@ -38,7 +38,7 @@ operatorNamespaces:
 # =============================================================================
 externalTcpProxy:
   # Shared TCP entrypoint for all database ports exposed outside the cluster.
-  enabled: true
+  enabled: false
   image:
     # HAProxy is the single L4 hop that forwards public DB traffic to cluster services.
     repository: haproxy
@@ -109,6 +109,14 @@ postgresql:
   # Enable PostgreSQL for the seang release so the external TCP proxy renders
   # the PostgreSQL listener/backend on every deploy.
   enabled: false
+  # Optional existing Secret for the bootstrap app user. When set, Helm will
+  # not create the release-scoped app Secret from values. The Secret must
+  # expose `username` and `password` keys.
+  externalSecretRef: ""
+  # Optional existing Secret for the PostgreSQL superuser. When set, Helm will
+  # not create the release-scoped superuser Secret from values. The Secret must
+  # expose `username` and `password` keys, and `username` should be `postgres`.
+  superuserExternalSecretRef: ""
   # Connection handling for PostgreSQL is operator-native PgBouncer via the
   # CloudNativePG Pooler resource.
   connectionHandling:
@@ -219,7 +227,7 @@ postgresql:
   backup:
     # Default backup target is the MinIO release installed by setup.sh.
     # Uses one bucket per Helm release, with a PostgreSQL-specific prefix.
-    enabled: true
+    enabled: false
     # Supported providers in this chart: s3, gcs
     provider: s3
     destinationPath: "s3://{{ .Release.Namespace }}/{{ default (printf \"%s/%s\" .Release.Name (include \"postgresql.fullname\" .)) .Values.global.clusterIdentity }}"
@@ -257,7 +265,7 @@ postgresql:
 
   # Optional PgBouncer layer in front of the primary/read-only service.
   pooler:
-    enabled: false
+    enabled: true
     # Keep a distinct name so the Pooler service cannot be confused with the
     # cluster's built-in -rw service.
     name: pooler-rw
@@ -309,6 +317,10 @@ mongodb:
   # MongoDB keeps its own operator-native backup task flow and direct/service-based
   # connection handling instead of a PostgreSQL Pooler CRD.
   enabled: false
+  # Optional existing Secret containing the full MongoDB operator credential
+  # payload. When set, Helm will not create the release-scoped credentials
+  # Secret from values.
+  externalSecretRef: ""
   # MongoDB replica-set self-identification must match the kubelet-managed pod
   # FQDN domain. This cluster's pod FQDNs resolve under `svc.benzcluster`.
   clusterServiceDNSSuffix: benzcluster
@@ -437,7 +449,7 @@ mongodb:
   backup:
     # Percona backup jobs use the namespace as the bucket and store backups
     # under <release>/<cluster>.
-    enabled: true
+    enabled: false
     image: percona/percona-backup-mongodb:2.12.0
     startingDeadlineSeconds: 600
     storageType: s3
@@ -491,6 +503,10 @@ mysql:
   # Connection fan-in is handled by the operator-managed HAProxy layer rather
   # than a PostgreSQL-style Pooler object.
   enabled: false
+  # Optional existing Secret for MySQL operator/bootstrap credentials. When
+  # set, Helm will not create the release-scoped MySQL Secrets from values.
+  # The Secret must contain the operator keys plus `init-users.sql`.
+  externalSecretRef: ""
   connectionHandling:
     enabled: true
     mode: haproxy
@@ -599,7 +615,7 @@ mysql:
 
   backup:
     # PXC backups use the namespace as the bucket.
-    enabled: true
+    enabled: false
     image: percona/percona-xtradb-cluster-operator:1.14.0-pxc8.0-backup-pxb8.0.35
     schedule:
       name: daily-backup
@@ -650,6 +666,10 @@ redis:
   # Redis keeps direct cluster connectivity. Use the exporter for metrics and
   # the external TCP proxy for public access when needed.
   enabled: false
+  # Optional existing Secret for Redis credentials. When set, Helm will not
+  # create the release-scoped Redis Secret from values. The Secret must expose
+  # `username` and `password` keys.
+  externalSecretRef: ""
   # Redis connection handling is client-native. Applications should use their
   # own Redis client pools; this chart does not add a separate proxy layer.
   connectionHandling:
@@ -722,7 +742,7 @@ redis:
     # Redis does not have an operator-native scheduled backup CR in this chart,
     # so backups are produced by a CronJob that runs redis-cli --rdb and uploads
     # the snapshot to MinIO/S3.
-    enabled: true
+    enabled: false
     image: alpine:3.20
     imagePullPolicy: IfNotPresent
     schedule:
@@ -768,6 +788,10 @@ cassandra:
   # Cassandra keeps its own Medusa backup schedule and direct service-based
   # connectivity instead of a PostgreSQL Pooler.
   enabled: false
+  # Optional existing Secret for the Cassandra superuser. When set, Helm will
+  # not create the release-scoped Cassandra credentials Secret from values.
+  # The Secret must expose `username` and `password` keys.
+  externalSecretRef: ""
   # Cassandra connection handling is driver-native. Applications should rely on
   # Cassandra driver session pooling instead of a standalone proxy/pooler CRD.
   connectionHandling:
@@ -878,7 +902,7 @@ cassandra:
   backup:
     # Medusa uses the namespace as the bucket and stores backups under
     # <release>/<cluster>.
-    enabled: true
+    enabled: false
     medusaImage: k8ssandra/medusa:0.14.0
     schedule:
       enabled: true

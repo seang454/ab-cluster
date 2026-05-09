@@ -3,7 +3,11 @@
 {{- end -}}
 
 {{- define "redis.secretName" -}}
+{{- if .Values.externalSecretRef -}}
+{{- .Values.externalSecretRef -}}
+{{- else -}}
 {{- printf "%s-redis-credentials" .Release.Name | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
 {{- end -}}
 
 {{- define "redis.tlsSecretName" -}}

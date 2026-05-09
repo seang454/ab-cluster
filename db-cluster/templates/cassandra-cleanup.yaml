@@ -25,6 +25,7 @@
 {{- $allPodsService := printf "%s-%s-all-pods-service" $clusterName $datacenter -}}
 {{- $additionalSeedService := printf "%s-%s-additional-seed-service" $clusterName $datacenter -}}
 {{- $seedService := printf "%s-seed-service" $clusterName -}}
+{{- $externalSecretRef := dig "externalSecretRef" "" $cassandra -}}
 {{- $superuserSecretName := printf "%s-cassandra-credentials" .Release.Name -}}
 {{- $serverSecretName := printf "%s-server-encryption-stores" (printf "%s-cassandra" .Release.Name) -}}
 {{- $configuredServerSecret := dig "tls" "serverSecretName" "" $cassandra -}}
@@ -138,7 +139,9 @@ spec:
           kubectl delete service "{{ $seedService }}" -n "${ns}" --ignore-not-found=true || true
 
           echo "Deleting Cassandra secrets and ConfigMap..."
+          {{- if not $externalSecretRef }}
           kubectl delete secret "{{ $superuserSecretName }}" -n "${ns}" --ignore-not-found=true || true
+          {{- end }}
           kubectl delete secret "{{ $serverSecretName }}" -n "${ns}" --ignore-not-found=true || true
           kubectl delete secret "{{ $clientSecretName }}" -n "${ns}" --ignore-not-found=true || true
           kubectl delete configmap "{{ $caConfigName }}" -n "${ns}" --ignore-not-found=true || true

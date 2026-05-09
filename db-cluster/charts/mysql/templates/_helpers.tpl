@@ -8,7 +8,19 @@
 {{- end -}}
 
 {{- define "mysql.secretName" -}}
+{{- if .Values.externalSecretRef -}}
+{{- .Values.externalSecretRef -}}
+{{- else -}}
 {{- printf "%s-mysql-credentials" .Release.Name | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "mysql.initSecretName" -}}
+{{- if .Values.externalSecretRef -}}
+{{- .Values.externalSecretRef -}}
+{{- else -}}
+{{- printf "%s-mysql-init" .Release.Name | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
 {{- end -}}
 
 {{- define "mysql.sslSecretName" -}}

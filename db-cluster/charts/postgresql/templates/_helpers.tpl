@@ -3,11 +3,19 @@
 {{- end -}}
 
 {{- define "postgresql.superuserSecretName" -}}
+{{- if .Values.superuserExternalSecretRef -}}
+{{- .Values.superuserExternalSecretRef -}}
+{{- else -}}
 {{- printf "%s-postgresql-credentials" .Release.Name | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
 {{- end -}}
 
 {{- define "postgresql.appSecretName" -}}
+{{- if .Values.externalSecretRef -}}
+{{- .Values.externalSecretRef -}}
+{{- else -}}
 {{- printf "%s-postgresql-app" .Release.Name | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
 {{- end -}}
 
 {{- define "postgresql.storageClass" -}}

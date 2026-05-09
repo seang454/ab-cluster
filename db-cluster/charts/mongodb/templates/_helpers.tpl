@@ -3,7 +3,11 @@
 {{- end -}}
 
 {{- define "mongodb.secretName" -}}
+{{- if .Values.externalSecretRef -}}
+{{- .Values.externalSecretRef -}}
+{{- else -}}
 {{- printf "%s-mongodb-credentials" .Release.Name | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
 {{- end -}}
 
 {{- define "mongodb.sslSecretName" -}}

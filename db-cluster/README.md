@@ -153,6 +153,58 @@ database you need and fill in the client-facing `connection` fields supplied by
 the user. Internal/operator credentials keep chart defaults unless you are
 intentionally rotating them.
 
+For API-driven deployments, each database block can optionally point at a
+pre-created Kubernetes Secret instead of letting Helm render secrets from
+plaintext values. When `externalSecretRef` is empty, the chart keeps the
+current behavior and creates the Secret from values.
+
+Example:
+
+```yaml
+postgresql:
+  enabled: true
+  connection:
+    username: "appuser"
+  externalSecretRef: "my-postgresql-app"
+  superuserExternalSecretRef: "my-postgresql-superuser"
+
+mongodb:
+  enabled: true
+  externalSecretRef: "my-mongodb-credentials"
+
+mysql:
+  enabled: true
+  externalSecretRef: "my-mysql-credentials"
+
+redis:
+  enabled: true
+  externalSecretRef: "my-redis-credentials"
+
+cassandra:
+  enabled: true
+  externalSecretRef: "my-cassandra-credentials"
+```
+
+Expected Secret payloads:
+
+- PostgreSQL `externalSecretRef`: `username`, `password`. The username should
+  match `postgresql.connection.username` or the bootstrap owner.
+- PostgreSQL `superuserExternalSecretRef`: `username`, `password`, with
+  `username: postgres`.
+- MongoDB `externalSecretRef`: `MONGODB_CLUSTER_ADMIN_USER`,
+  `MONGODB_CLUSTER_ADMIN_PASSWORD`, `MONGODB_USER_ADMIN_USER`,
+  `MONGODB_USER_ADMIN_PASSWORD`, `MONGODB_CLUSTER_MONITOR_USER`,
+  `MONGODB_CLUSTER_MONITOR_PASSWORD`, `MONGODB_DATABASE_ADMIN_USER`,
+  `MONGODB_DATABASE_ADMIN_PASSWORD`, `MONGODB_BACKUP_USER`,
+  `MONGODB_BACKUP_PASSWORD`, `MONGODB_REPLICATION_KEY`.
+- MySQL `externalSecretRef`: `root`, `xtrabackup`, `monitor`,
+  `clustercheck`, `proxyadmin`, `operator`, `replication`, and
+  `init-users.sql`.
+- Redis `externalSecretRef`: `username`, `password`. For Redis, create the
+  Secret before running Helm so the chart can resolve the password into the
+  rendered Redis config when no fallback value is supplied.
+- Cassandra `externalSecretRef`: `username`, `password`.
+
 Example:
 
 ```yaml
@@ -244,7 +296,8 @@ for the other database operators so credentials stay outside the Helm values.
 - If you are using Spring or another caller to deploy the OCI chart, point it
   at the new chart version and keep the override file to non-empty request
   fields only.
-- Backup-capable databases in this chart now default to the S3 layout
+- Backup-capable databases in this chart default to `backup.enabled: false`.
+  When enabled, they use the S3 layout
   `s3://<namespace>/<releaseName>/<clusterName>`. PostgreSQL uses a full
   `destinationPath`, while MongoDB, MySQL, and Cassandra use the namespace as
   the bucket and `<releaseName>/<clusterName>` as the prefix.
@@ -299,7 +352,9 @@ The chart computes a release-scoped MinIO credential secret name by default:
 `minio-credentials-<release-name>`. That single Secret includes both the raw
 keys used by PostgreSQL and the rendered `credentials` file used by MongoDB,
 MySQL, and Cassandra, so multiple releases can coexist in the same namespace
-without secret-name collisions.
+without secret-name collisions. The chart only renders that `ExternalSecret`
+when at least one enabled database backup still resolves to the default
+`minio-credentials-<release-name>` secret.
 
 CloudNativePG scheduled backups use a six-field cron format with seconds:
 

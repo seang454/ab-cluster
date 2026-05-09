@@ -62,7 +62,11 @@
 {{- end -}}
 
 {{- define "cassandra.secretName" -}}
+{{- if .Values.externalSecretRef -}}
+{{- .Values.externalSecretRef -}}
+{{- else -}}
 {{- printf "%s-cassandra-credentials" .Release.Name | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
 {{- end -}}
 
 {{- define "cassandra.storageClass" -}}

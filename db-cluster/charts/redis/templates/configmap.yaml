@@ -1,8 +1,27 @@
 {{- $tls := .Values.tls | default dict -}}
 {{- $connection := .Values.connection | default dict -}}
 {{- $auth := .Values.auth | default dict -}}
+{{- $externalSecretRef := .Values.externalSecretRef | default "" -}}
 {{- $redisUsername := get $connection "username" | default (get $auth "username" | default "default") -}}
-{{- $redisPassword := required "redis.connection.password must be set for the client database user" (get $connection "password" | default (get $auth "password" | default "")) -}}
+{{- $redisPassword := get $connection "password" | default (get $auth "password" | default "") -}}
+{{- if $externalSecretRef }}
+{{- $existingSecret := lookup "v1" "Secret" .Release.Namespace $externalSecretRef -}}
+{{- if $existingSecret }}
+{{- $secretData := get $existingSecret "data" | default dict -}}
+{{- $secretPassword := get $secretData "password" | default "" -}}
+{{- if not $secretPassword }}
+{{- fail (printf "redis.externalSecretRef secret %q must contain a password key" $externalSecretRef) -}}
+{{- end }}
+{{- $redisPassword = $secretPassword | b64dec -}}
+{{- with (get $secretData "username") }}
+{{- $redisUsername = . | b64dec -}}
+{{- end }}
+{{- else if not $redisPassword }}
+{{- fail (printf "redis.externalSecretRef secret %q was not found in namespace %q and no redis.connection.password fallback was provided" $externalSecretRef .Release.Namespace) -}}
+{{- end }}
+{{- else }}
+{{- $redisPassword = required "redis.connection.password must be set for the client database user when redis.externalSecretRef is empty" $redisPassword -}}
+{{- end }}
 {{- if or $tls.enabled $redisPassword }}
 apiVersion: v1
 kind: ConfigMap

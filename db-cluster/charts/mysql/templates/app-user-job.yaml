@@ -1,8 +1,13 @@
 {{- $connection := .Values.connection | default dict -}}
+{{- $externalSecretRef := .Values.externalSecretRef | default "" -}}
+{{- $jobHashInput := $externalSecretRef -}}
+{{- if not $externalSecretRef -}}
 {{- $appUsername := (get $connection "username" | default "appuser") -}}
-{{- $appPassword := required "mysql.connection.password must be set for the client database user" (get $connection "password" | default "") -}}
-{{- $appDatabase := required "mysql.connection.database must be set for the client database" (get $connection "database" | default "") -}}
-{{- $jobHash := printf "%s:%s:%s" $appUsername $appPassword $appDatabase | sha256sum | trunc 10 -}}
+{{- $appPassword := required "mysql.connection.password must be set for the client database user when mysql.externalSecretRef is empty" (get $connection "password" | default "") -}}
+{{- $appDatabase := required "mysql.connection.database must be set for the client database when mysql.externalSecretRef is empty" (get $connection "database" | default "") -}}
+{{- $jobHashInput = printf "%s:%s:%s" $appUsername $appPassword $appDatabase -}}
+{{- end -}}
+{{- $jobHash := $jobHashInput | sha256sum | trunc 10 -}}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -54,4 +59,4 @@ spec:
       volumes:
         - name: mysql-init
           secret:
-            secretName: {{ .Release.Name }}-mysql-init
+            secretName: {{ include "mysql.initSecretName" . }}
