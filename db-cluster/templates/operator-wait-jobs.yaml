@@ -18,6 +18,13 @@ spec:
       containers:
       - name: wait
         image: bitnami/kubectl:latest
+        resources:
+          requests:
+            cpu: 25m
+            memory: 64Mi
+          limits:
+            cpu: 100m
+            memory: 128Mi
         command:
         - /bin/sh
         - -c
@@ -46,6 +53,13 @@ spec:
       containers:
       - name: wait
         image: bitnami/kubectl:latest
+        resources:
+          requests:
+            cpu: 25m
+            memory: 64Mi
+          limits:
+            cpu: 100m
+            memory: 128Mi
         command:
         - /bin/sh
         - -c
@@ -74,6 +88,13 @@ spec:
       containers:
       - name: wait
         image: bitnami/kubectl:latest
+        resources:
+          requests:
+            cpu: 25m
+            memory: 64Mi
+          limits:
+            cpu: 100m
+            memory: 128Mi
         command:
         - /bin/sh
         - -c
@@ -102,6 +123,13 @@ spec:
       containers:
       - name: wait
         image: bitnami/kubectl:latest
+        resources:
+          requests:
+            cpu: 25m
+            memory: 64Mi
+          limits:
+            cpu: 100m
+            memory: 128Mi
         command:
         - /bin/sh
         - -c
@@ -130,6 +158,13 @@ spec:
       containers:
       - name: wait
         image: bitnami/kubectl:latest
+        resources:
+          requests:
+            cpu: 25m
+            memory: 64Mi
+          limits:
+            cpu: 100m
+            memory: 128Mi
         command:
         - /bin/sh
         - -c

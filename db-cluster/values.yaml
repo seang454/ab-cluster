@@ -265,7 +265,7 @@ postgresql:
 
   # Optional PgBouncer layer in front of the primary/read-only service.
   pooler:
-    enabled: true
+    enabled: false
     # Keep a distinct name so the Pooler service cannot be confused with the
     # cluster's built-in -rw service.
     name: pooler-rw
