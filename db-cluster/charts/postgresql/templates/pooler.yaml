@@ -14,6 +14,16 @@ spec:
   instances: {{ .Values.pooler.instances | default 1 }}
   pgbouncer:
     {{- toYaml .Values.pooler.pgbouncer | nindent 4 }}
+  template:
+    spec:
+      initContainers:
+      - name: bootstrap-controller
+        resources:
+          {{- toYaml .Values.pooler.bootstrapControllerResources | nindent 10 }}
+      containers:
+      - name: pgbouncer
+        resources:
+          {{- toYaml .Values.pooler.resources | nindent 10 }}
   {{- if .Values.pooler.monitoring.enablePodMonitor }}
   monitoring:
     enablePodMonitor: true

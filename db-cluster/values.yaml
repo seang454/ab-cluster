@@ -265,7 +265,7 @@ postgresql:
 
   # Optional PgBouncer layer in front of the primary/read-only service.
   pooler:
-    enabled: false
+    enabled: true
     # Keep a distinct name so the Pooler service cannot be confused with the
     # cluster's built-in -rw service.
     name: pooler-rw
@@ -279,6 +279,20 @@ postgresql:
         max_client_conn: "200"
         # Size backend pools conservatively relative to PostgreSQL max_connections.
         default_pool_size: "20"
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 250m
+        memory: 256Mi
+    bootstrapControllerResources:
+      requests:
+        cpu: 25m
+        memory: 64Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
     monitoring:
       # Same default as the cluster-level setting: disable CNPG-managed
       # PodMonitor generation unless explicitly requested.
