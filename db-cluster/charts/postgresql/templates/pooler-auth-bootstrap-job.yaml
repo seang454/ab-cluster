@@ -43,6 +43,16 @@ spec:
                   key: password
             - name: APP_DATABASE
               value: {{ .Values.cluster.bootstrap.database | quote }}
+            - name: APP_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "postgresql.appSecretName" . }}
+                  key: username
+            - name: APP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "postgresql.appSecretName" . }}
+                  key: password
           command:
             - /bin/sh
             - -ec
@@ -55,15 +65,37 @@ spec:
               psql -v ON_ERROR_STOP=1 -d postgres \
                 -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'cnpg_pooler_pgbouncer') THEN CREATE ROLE cnpg_pooler_pgbouncer WITH LOGIN; END IF; END \$\$;"
 
+              app_username_sql=$(printf '%s' "$APP_USERNAME" | sed "s/'/''/g")
+              app_username_ident=$(printf '%s' "$APP_USERNAME" | sed 's/"/""/g')
+              app_password_sql=$(printf '%s' "$APP_PASSWORD" | sed "s/'/''/g")
+              if psql -v ON_ERROR_STOP=1 -d postgres -tAc "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '${app_username_sql}'" | grep -q 1; then
+                psql -v ON_ERROR_STOP=1 -d postgres \
+                  -c "ALTER ROLE \"${app_username_ident}\" WITH LOGIN PASSWORD '${app_password_sql}';"
+              else
+                psql -v ON_ERROR_STOP=1 -d postgres \
+                  -c "CREATE ROLE \"${app_username_ident}\" WITH LOGIN PASSWORD '${app_password_sql}';"
+              fi
+
               psql -v ON_ERROR_STOP=1 -d postgres \
                 -c "GRANT CONNECT ON DATABASE \"${APP_DATABASE}\" TO cnpg_pooler_pgbouncer;"
+              psql -v ON_ERROR_STOP=1 -d postgres \
+                -c "GRANT CONNECT ON DATABASE postgres TO \"${app_username_ident}\";"
+              psql -v ON_ERROR_STOP=1 -d postgres \
+                -c "GRANT CONNECT ON DATABASE \"${APP_DATABASE}\" TO \"${app_username_ident}\";"
+
+              for database in postgres "$APP_DATABASE"; do
+                psql -v ON_ERROR_STOP=1 -d "$database" \
+                  -c "CREATE OR REPLACE FUNCTION public.user_search(uname TEXT) RETURNS TABLE (usename name, passwd text) LANGUAGE sql SECURITY DEFINER AS 'SELECT usename, passwd FROM pg_catalog.pg_shadow WHERE usename=\$1;';"
+                psql -v ON_ERROR_STOP=1 -d "$database" \
+                  -c "REVOKE ALL ON FUNCTION public.user_search(text) FROM public;"
+                psql -v ON_ERROR_STOP=1 -d "$database" \
+                  -c "GRANT EXECUTE ON FUNCTION public.user_search(text) TO cnpg_pooler_pgbouncer;"
+              done
 
               psql -v ON_ERROR_STOP=1 -d "$APP_DATABASE" \
-                -c "CREATE OR REPLACE FUNCTION public.user_search(uname TEXT) RETURNS TABLE (usename name, passwd text) LANGUAGE sql SECURITY DEFINER AS 'SELECT usename, passwd FROM pg_catalog.pg_shadow WHERE usename=\$1;';"
+                -c "GRANT USAGE, CREATE ON SCHEMA public TO \"${app_username_ident}\";"
               psql -v ON_ERROR_STOP=1 -d "$APP_DATABASE" \
-                -c "REVOKE ALL ON FUNCTION public.user_search(text) FROM public;"
-              psql -v ON_ERROR_STOP=1 -d "$APP_DATABASE" \
-                -c "GRANT EXECUTE ON FUNCTION public.user_search(text) TO cnpg_pooler_pgbouncer;"
+                -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO \"${app_username_ident}\";"
           {{- with $authBootstrap.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
