@@ -52,31 +52,18 @@ spec:
                 sleep 5
               done
 
-              psql -v ON_ERROR_STOP=1 -d postgres <<'SQL'
-              DO $$
-              BEGIN
-                IF NOT EXISTS (
-                  SELECT 1 FROM pg_catalog.pg_roles
-                  WHERE rolname = 'cnpg_pooler_pgbouncer'
-                ) THEN
-                  CREATE ROLE cnpg_pooler_pgbouncer WITH LOGIN;
-                END IF;
-              END
-              $$;
-              SQL
+              psql -v ON_ERROR_STOP=1 -d postgres \
+                -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'cnpg_pooler_pgbouncer') THEN CREATE ROLE cnpg_pooler_pgbouncer WITH LOGIN; END IF; END \$\$;"
 
               psql -v ON_ERROR_STOP=1 -d postgres \
                 -c "GRANT CONNECT ON DATABASE \"${APP_DATABASE}\" TO cnpg_pooler_pgbouncer;"
 
-              psql -v ON_ERROR_STOP=1 -d "$APP_DATABASE" <<'SQL'
-              CREATE OR REPLACE FUNCTION public.user_search(uname TEXT)
-                RETURNS TABLE (usename name, passwd text)
-                LANGUAGE sql SECURITY DEFINER AS
-                'SELECT usename, passwd FROM pg_catalog.pg_shadow WHERE usename=$1;';
-
-              REVOKE ALL ON FUNCTION public.user_search(text) FROM public;
-              GRANT EXECUTE ON FUNCTION public.user_search(text) TO cnpg_pooler_pgbouncer;
-              SQL
+              psql -v ON_ERROR_STOP=1 -d "$APP_DATABASE" \
+                -c "CREATE OR REPLACE FUNCTION public.user_search(uname TEXT) RETURNS TABLE (usename name, passwd text) LANGUAGE sql SECURITY DEFINER AS 'SELECT usename, passwd FROM pg_catalog.pg_shadow WHERE usename=\$1;';"
+              psql -v ON_ERROR_STOP=1 -d "$APP_DATABASE" \
+                -c "REVOKE ALL ON FUNCTION public.user_search(text) FROM public;"
+              psql -v ON_ERROR_STOP=1 -d "$APP_DATABASE" \
+                -c "GRANT EXECUTE ON FUNCTION public.user_search(text) TO cnpg_pooler_pgbouncer;"
           {{- with $authBootstrap.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
