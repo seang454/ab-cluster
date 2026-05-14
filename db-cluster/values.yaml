@@ -125,7 +125,7 @@ postgresql:
   operator:
     enabled: false
   connection:
-    username: appuser
+    username: app_postgres
     password: ""
     port: 15432
   credentials:
@@ -188,7 +188,7 @@ postgresql:
       database: appdb
       # Kept for backward compatibility. postgresql.connection.username is used
       # for new request-driven deployments.
-      owner: appuser
+      owner: app_postgres
       encoding: UTF8
 
     resources:
