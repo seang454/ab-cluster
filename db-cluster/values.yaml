@@ -279,6 +279,21 @@ postgresql:
         max_client_conn: "200"
         # Size backend pools conservatively relative to PostgreSQL max_connections.
         default_pool_size: "20"
+    authBootstrap:
+      # CNPG normally creates the pooler auth role automatically, but when this
+      # chart supplies external bootstrap/superuser secrets we must ensure the
+      # role and auth lookup function exist for PgBouncer.
+      enabled: true
+      image: postgres:16-alpine
+      backoffLimit: 6
+      activeDeadlineSeconds: 600
+      resources:
+        requests:
+          cpu: 25m
+          memory: 64Mi
+        limits:
+          cpu: 100m
+          memory: 128Mi
     resources:
       requests:
         cpu: 50m

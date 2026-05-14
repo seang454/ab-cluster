@@ -1,0 +1,84 @@
+{{- $conn := .Values.connectionHandling | default dict -}}
+{{- $connEnabled := get $conn "enabled" -}}
+{{- $connMode := get $conn "mode" | default "pooler" -}}
+{{- $authBootstrap := .Values.pooler.authBootstrap | default dict -}}
+{{- if and .Values.pooler.enabled (ne $connEnabled false) (eq $connMode "pooler") ($authBootstrap.enabled | default true) }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "postgresql.fullname" . }}-pooler-auth
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "20"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ $authBootstrap.backoffLimit | default 6 }}
+  activeDeadlineSeconds: {{ $authBootstrap.activeDeadlineSeconds | default 600 }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "postgresql.fullname" . }}-pooler-auth
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: pooler-auth-bootstrap
+          image: {{ $authBootstrap.image | default "postgres:16-alpine" | quote }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: PGHOST
+              value: {{ include "postgresql.readWriteServiceName" . | quote }}
+            - name: PGPORT
+              value: "5432"
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "postgresql.superuserSecretName" . }}
+                  key: username
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "postgresql.superuserSecretName" . }}
+                  key: password
+            - name: APP_DATABASE
+              value: {{ .Values.cluster.bootstrap.database | quote }}
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              until pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d postgres; do
+                echo "Waiting for PostgreSQL primary service ${PGHOST}:${PGPORT}..."
+                sleep 5
+              done
+
+              psql -v ON_ERROR_STOP=1 -d postgres <<'SQL'
+              DO $$
+              BEGIN
+                IF NOT EXISTS (
+                  SELECT 1 FROM pg_catalog.pg_roles
+                  WHERE rolname = 'cnpg_pooler_pgbouncer'
+                ) THEN
+                  CREATE ROLE cnpg_pooler_pgbouncer WITH LOGIN;
+                END IF;
+              END
+              $$;
+              SQL
+
+              psql -v ON_ERROR_STOP=1 -d postgres \
+                -c "GRANT CONNECT ON DATABASE \"${APP_DATABASE}\" TO cnpg_pooler_pgbouncer;"
+
+              psql -v ON_ERROR_STOP=1 -d "$APP_DATABASE" <<'SQL'
+              CREATE OR REPLACE FUNCTION public.user_search(uname TEXT)
+                RETURNS TABLE (usename name, passwd text)
+                LANGUAGE sql SECURITY DEFINER AS
+                'SELECT usename, passwd FROM pg_catalog.pg_shadow WHERE usename=$1;';
+
+              REVOKE ALL ON FUNCTION public.user_search(text) FROM public;
+              GRANT EXECUTE ON FUNCTION public.user_search(text) TO cnpg_pooler_pgbouncer;
+              SQL
+          {{- with $authBootstrap.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}
