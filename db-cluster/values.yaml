@@ -200,7 +200,9 @@ postgresql:
         memory: "1Gi"
 
     podAntiAffinityType: preferred
-    whenUnsatisfiable: DoNotSchedule
+    # Prefer spreading PostgreSQL instances across nodes, but do not block
+    # clone/deploy completion on small clusters when one node is short on CPU.
+    whenUnsatisfiable: ScheduleAnyway
     switchoverDelay: 60
     failoverDelay: 0
     monitoring:
