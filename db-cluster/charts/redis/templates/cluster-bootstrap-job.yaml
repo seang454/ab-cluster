@@ -61,6 +61,15 @@ spec:
             sleep 5
           done
 
+          index=1
+          while [ "$index" -lt "$REDIS_LEADERS" ]; do
+            host="$(leader_host "$index")"
+            until redis_cli "$host" ping | grep -q PONG; do
+              sleep 5
+            done
+            index=$((index + 1))
+          done
+
           assigned="$(redis_cli "$first_host" cluster info | awk -F: '/cluster_slots_assigned/ { gsub(/\r/, "", $2); print $2 }')"
           if [ "${assigned:-0}" = "16384" ]; then
             exit 0
@@ -68,7 +77,9 @@ spec:
 
           index=1
           while [ "$index" -lt "$REDIS_LEADERS" ]; do
-            redis_cli "$first_host" cluster meet "$(leader_ip "$index")" 6379 || true
+            until redis_cli "$first_host" cluster meet "$(leader_ip "$index")" 6379; do
+              sleep 5
+            done
             index=$((index + 1))
           done
           sleep 5
@@ -81,6 +92,8 @@ spec:
             if [ -n "${REDIS_EXTERNAL_DOMAIN_SUFFIX:-}" ]; then
               redis_cli "$host" config set cluster-announce-hostname "{{ include "redis.fullname" . }}-leader-$index.${REDIS_EXTERNAL_DOMAIN_SUFFIX}" || true
               redis_cli "$host" config set cluster-preferred-endpoint-type hostname || true
+              redis_cli "$host" config set cluster-announce-tls-port {{ get $externalAccess "port" | default 16379 }} || true
+              redis_cli "$host" config set cluster-announce-port 0 || true
             fi
             redis_cli "$host" cluster addslots $(seq "$start" "$end") || true
             index=$((index + 1))
