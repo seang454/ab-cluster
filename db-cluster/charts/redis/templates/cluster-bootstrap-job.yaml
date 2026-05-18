@@ -1,0 +1,98 @@
+{{- $bootstrap := .Values.cluster.bootstrapSlots | default dict -}}
+{{- $tls := .Values.tls | default dict -}}
+{{- $externalAccess := .Values.externalAccess | default dict -}}
+{{- $leaderReplicas := get .Values.cluster "leaderReplicas" | default .Values.cluster.instances -}}
+{{- if and ($bootstrap.enabled | default true) (gt (int $leaderReplicas) 1) }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "redis.fullname" . }}-cluster-bootstrap
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/instance: {{ include "redis.fullname" . }}
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: redis
+        app.kubernetes.io/instance: {{ include "redis.fullname" . }}
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: bootstrap
+        image: {{ .Values.cluster.image }}
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "redis.secretName" . }}
+              key: password
+        - name: REDIS_LEADERS
+          value: {{ $leaderReplicas | quote }}
+        {{- if get $externalAccess "redisClusterDomainSuffix" }}
+        - name: REDIS_EXTERNAL_DOMAIN_SUFFIX
+          value: {{ get $externalAccess "redisClusterDomainSuffix" | quote }}
+        {{- end }}
+        command:
+        - sh
+        - -ec
+        - |
+          set -eu
+
+          redis_cli() {
+            host="$1"
+            shift
+            redis-cli -h "$host" -p 6379 -a "$REDIS_PASSWORD"{{- if $tls.enabled }} --tls --cert /tls/{{ get $tls "certKey" | default "tls.crt" }} --key /tls/{{ get $tls "privateKeyKey" | default "tls.key" }} --cacert /tls/{{ get $tls "caKey" | default "ca.crt" }}{{- end }} "$@"
+          }
+
+          leader_host() {
+            echo "{{ include "redis.fullname" . }}-leader-$1.{{ include "redis.fullname" . }}-leader-headless.{{ .Release.Namespace }}.svc"
+          }
+
+          first_host="$(leader_host 0)"
+          until redis_cli "$first_host" ping | grep -q PONG; do
+            sleep 5
+          done
+
+          assigned="$(redis_cli "$first_host" cluster info | awk -F: '/cluster_slots_assigned/ { gsub(/\r/, "", $2); print $2 }')"
+          if [ "${assigned:-0}" = "16384" ]; then
+            exit 0
+          fi
+
+          index=1
+          while [ "$index" -lt "$REDIS_LEADERS" ]; do
+            redis_cli "$first_host" cluster meet "$(leader_host "$index")" 6379 || true
+            index=$((index + 1))
+          done
+          sleep 5
+
+          index=0
+          while [ "$index" -lt "$REDIS_LEADERS" ]; do
+            start=$((index * 16384 / REDIS_LEADERS))
+            end=$((((index + 1) * 16384 / REDIS_LEADERS) - 1))
+            host="$(leader_host "$index")"
+            if [ -n "${REDIS_EXTERNAL_DOMAIN_SUFFIX:-}" ]; then
+              redis_cli "$host" config set cluster-announce-hostname "{{ include "redis.fullname" . }}-leader-$index.${REDIS_EXTERNAL_DOMAIN_SUFFIX}" || true
+              redis_cli "$host" config set cluster-preferred-endpoint-type hostname || true
+            fi
+            redis_cli "$host" cluster addslots $(seq "$start" "$end") || true
+            index=$((index + 1))
+          done
+
+          redis_cli "$first_host" cluster info | grep 'cluster_state:ok'
+        {{- if $tls.enabled }}
+        volumeMounts:
+        - name: redis-tls
+          mountPath: /tls
+          readOnly: true
+        {{- end }}
+      {{- if $tls.enabled }}
+      volumes:
+      - name: redis-tls
+        secret:
+          secretName: {{ include "redis.tlsSecretName" . }}
+      {{- end }}
+{{- end }}

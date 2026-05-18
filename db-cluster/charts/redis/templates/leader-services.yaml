@@ -1,0 +1,22 @@
+{{- $leaderReplicas := get .Values.cluster "leaderReplicas" | default .Values.cluster.instances -}}
+{{- range $index := until (int $leaderReplicas) }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "redis.fullname" $ }}-leader-{{ $index }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/instance: {{ include "redis.fullname" $ }}
+    redis-node-role: leader
+spec:
+  type: ClusterIP
+  ports:
+    - name: redis
+      port: {{ $.Values.cluster.port | default 6379 }}
+      targetPort: {{ $.Values.cluster.port | default 6379 }}
+      protocol: TCP
+  selector:
+    statefulset.kubernetes.io/pod-name: {{ include "redis.fullname" $ }}-leader-{{ $index }}
+{{- end }}

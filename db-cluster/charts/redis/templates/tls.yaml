@@ -2,6 +2,7 @@
 {{- $cm := $tls.certManager | default dict -}}
 {{- $generateCA := get $cm "generateCA" | default true -}}
 {{- $ext := .Values.externalAccess | default dict -}}
+{{- $leaderReplicas := get .Values.cluster "leaderReplicas" | default .Values.cluster.instances -}}
 {{- if $tls.enabled }}
 {{- if $generateCA }}
 apiVersion: cert-manager.io/v1
@@ -57,6 +58,12 @@ spec:
   - {{ include "redis.fullname" . }}-follower
   - {{ include "redis.fullname" . }}-follower.{{ .Release.Namespace }}
   - {{ include "redis.fullname" . }}-follower.{{ .Release.Namespace }}.svc
+  {{- range $index := until (int $leaderReplicas) }}
+  - {{ include "redis.fullname" $ }}-leader-{{ $index }}
+  - {{ include "redis.fullname" $ }}-leader-{{ $index }}.{{ $.Release.Namespace }}
+  - {{ include "redis.fullname" $ }}-leader-{{ $index }}.{{ $.Release.Namespace }}.svc
+  - {{ include "redis.fullname" $ }}-leader-{{ $index }}.{{ include "redis.fullname" $ }}-leader-headless.{{ $.Release.Namespace }}.svc
+  {{- end }}
   {{- range ($ext.publicHostnames | default list) }}
   - {{ . }}
   {{- end }}

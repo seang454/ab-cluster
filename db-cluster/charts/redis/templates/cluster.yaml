@@ -28,6 +28,7 @@ spec:
   {{- end }}
 
   redisLeader:
+    replicas: {{ get .Values.cluster "leaderReplicas" | default .Values.cluster.instances }}
     readinessProbe:
       exec:
         command:
@@ -67,6 +68,7 @@ spec:
                 app: {{ include "redis.fullname" . }}
 
   redisFollower:
+    replicas: {{ get .Values.cluster "followerReplicas" | default 0 }}
     readinessProbe:
       exec:
         command:

@@ -740,7 +740,14 @@ redis:
   cluster:
     # Redis is small and memory-sensitive, so requests stay modest.
     instances: 3
+    # OpsTree uses clusterSize for both leaders and followers by default.
+    # Keep three leaders for the full hash slot range and no followers by
+    # default so small workspaces do not exceed quota during bootstrap.
+    leaderReplicas: 3
+    followerReplicas: 0
     image: redis:7.2-alpine
+    bootstrapSlots:
+      enabled: true
     probes:
       # The operator's default TLS exec probes only allow a 1s timeout, which
       # is too aggressive during initial cluster bootstrap on Longhorn-backed
