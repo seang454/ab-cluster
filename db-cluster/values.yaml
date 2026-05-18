@@ -353,7 +353,7 @@ mongodb:
   # Secret from values.
   externalSecretRef: ""
   # MongoDB replica-set self-identification must match the kubelet-managed pod
-  # FQDN domain. This cluster's pod FQDNs resolve under `svc.benzcluster`.
+  # FQDN domain. This cluster resolves service names under `svc.benzcluster`.
   clusterServiceDNSSuffix: benzcluster
   clusterServiceDNSMode: Internal
   # MongoDB connection handling stays driver/operator-native. Use replica set
@@ -709,14 +709,16 @@ redis:
   operator:
     enabled: false
   connection:
-    username: redis
+    username: default
     password: ""
+    aclPermissions: "+@read +@write +@keyspace +@connection"
     port: 16379
   auth:
     # Kept for backward compatibility. redis.connection.password is used for
     # new request-driven deployments.
-    username: redis
+    username: default
     password: ""
+    aclPermissions: "+@read +@write +@keyspace +@connection"
   externalAccess:
     # Public hostname for Redis when exposing it outside the cluster.
     enabled: true

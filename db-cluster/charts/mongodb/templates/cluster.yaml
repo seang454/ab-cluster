@@ -92,7 +92,7 @@ spec:
     splitHorizons:
       {{- range $i, $_ := until $instances }}
       {{ include "mongodb.fullname" $ }}-rs0-{{ $i }}:
-        external: {{ index $publicHosts $i | quote }}
+        external: {{ printf "%s:%d" (index $publicHosts $i) $basePort | quote }}
       {{- end }}
     {{- end }}
     {{- with .Values.cluster.probes }}

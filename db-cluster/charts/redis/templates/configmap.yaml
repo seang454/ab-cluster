@@ -4,6 +4,7 @@
 {{- $externalSecretRef := .Values.externalSecretRef | default "" -}}
 {{- $redisUsername := get $connection "username" | default (get $auth "username" | default "default") -}}
 {{- $redisPassword := get $connection "password" | default (get $auth "password" | default "") -}}
+{{- $redisAclPermissions := get $connection "aclPermissions" | default (get $auth "aclPermissions" | default "+@read +@write +@keyspace +@connection") -}}
 {{- if $externalSecretRef }}
 {{- $existingSecret := lookup "v1" "Secret" .Release.Namespace $externalSecretRef -}}
 {{- if $existingSecret }}
@@ -15,6 +16,9 @@
 {{- $redisPassword = $secretPassword | b64dec -}}
 {{- with (get $secretData "username") }}
 {{- $redisUsername = . | b64dec -}}
+{{- end }}
+{{- with (get $secretData "acl-permissions") }}
+{{- $redisAclPermissions = . | b64dec -}}
 {{- end }}
 {{- else if not $redisPassword }}
 {{- fail (printf "redis.externalSecretRef secret %q was not found in namespace %q and no redis.connection.password fallback was provided" $externalSecretRef .Release.Namespace) -}}
@@ -47,8 +51,11 @@ data:
     {{- if $redisPassword }}
     requirepass {{ $redisPassword }}
     masterauth {{ $redisPassword }}
-    {{- if ne $redisUsername "default" }}
-    user {{ $redisUsername }} on >{{ $redisPassword }} ~* &* +@all
+    {{- if eq $redisUsername "default" }}
+    user default on >{{ $redisPassword }} ~* &* {{ $redisAclPermissions }}
+    {{- else }}
+    user default off
+    user {{ $redisUsername }} on >{{ $redisPassword }} ~* &* {{ $redisAclPermissions }}
     {{- end }}
     {{- end }}
 {{- end }}
