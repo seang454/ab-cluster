@@ -56,6 +56,24 @@ spec:
             getent hosts "$(leader_host "$1")" | awk '{print $1; exit}'
           }
 
+          cluster_info_value() {
+            host="$1"
+            key="$2"
+            redis_cli "$host" cluster info | awk -F: -v key="$key" '$1 == key { gsub(/\r/, "", $2); print $2 }'
+          }
+
+          every_leader_knows_cluster() {
+            index=0
+            while [ "$index" -lt "$REDIS_LEADERS" ]; do
+              host="$(leader_host "$index")"
+              if [ "$(cluster_info_value "$host" cluster_known_nodes)" != "$REDIS_LEADERS" ]; then
+                return 1
+              fi
+              index=$((index + 1))
+            done
+            return 0
+          }
+
           first_host="$(leader_host 0)"
           until redis_cli "$first_host" ping | grep -q PONG; do
             sleep 5
@@ -70,8 +88,9 @@ spec:
             index=$((index + 1))
           done
 
-          assigned="$(redis_cli "$first_host" cluster info | awk -F: '/cluster_slots_assigned/ { gsub(/\r/, "", $2); print $2 }')"
-          if [ "${assigned:-0}" = "16384" ]; then
+          assigned="$(cluster_info_value "$first_host" cluster_slots_assigned)"
+          known="$(cluster_info_value "$first_host" cluster_known_nodes)"
+          if [ "${assigned:-0}" = "16384" ] && [ "${known:-0}" = "$REDIS_LEADERS" ]; then
             exit 0
           fi
 
@@ -92,7 +111,12 @@ spec:
             index=$((index + 1))
           done
 
-          until [ "$(redis_cli "$first_host" cluster info | awk -F: '/cluster_known_nodes/ { gsub(/\r/, "", $2); print $2 }')" = "$REDIS_LEADERS" ]; do
+          until every_leader_knows_cluster; do
+            index=1
+            while [ "$index" -lt "$REDIS_LEADERS" ]; do
+              redis_cli "$first_host" cluster meet "$(leader_ip "$index")" 6379 || true
+              index=$((index + 1))
+            done
             sleep 5
           done
           sleep 5
@@ -106,7 +130,7 @@ spec:
             index=$((index + 1))
           done
 
-          until [ "$(redis_cli "$first_host" cluster info | awk -F: '/cluster_slots_assigned/ { gsub(/\r/, "", $2); print $2 }')" = "16384" ]; do
+          until [ "$(cluster_info_value "$first_host" cluster_slots_assigned)" = "16384" ]; do
             sleep 5
           done
 
