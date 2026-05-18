@@ -16,6 +16,7 @@ metadata:
 spec:
   clusterSize: {{ .Values.cluster.instances }}
   clusterVersion: v7
+  port: {{ .Values.cluster.port | default 6379 }}
   persistenceEnabled: true
   {{- if $tls.enabled }}
   TLS:
@@ -107,6 +108,7 @@ spec:
   kubernetesConfig:
     image: {{ .Values.cluster.image }}
     imagePullPolicy: IfNotPresent
+    updateStrategy: {}
     resources:
       requests:
         cpu: {{ .Values.cluster.resources.requests.cpu }}
@@ -141,12 +143,5 @@ spec:
   redisExporter:
     enabled: true
     image: {{ .Values.exporter.image }}
-  {{- end }}
-
-  {{- if .Values.exporter.enabled }}
-  serviceMonitor:
-    enabled: true
-    interval: {{ (get $serviceMonitor "interval" | default "30s") | quote }}
-    scrapeTimeout: {{ (get $serviceMonitor "scrapeTimeout" | default "10s") | quote }}
-    namespace: {{ (get $serviceMonitor "namespace" | default "") | quote }}
+    port: {{ .Values.exporter.port | default 9121 }}
   {{- end }}
