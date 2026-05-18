@@ -75,12 +75,25 @@ spec:
             exit 0
           fi
 
+          index=0
+          while [ "$index" -lt "$REDIS_LEADERS" ]; do
+            host="$(leader_host "$index")"
+            redis_cli "$host" config set cluster-announce-hostname "$host" || true
+            redis_cli "$host" config set cluster-announce-tls-port 6379 || true
+            redis_cli "$host" config set cluster-announce-port 0 || true
+            index=$((index + 1))
+          done
+
           index=1
           while [ "$index" -lt "$REDIS_LEADERS" ]; do
             until redis_cli "$first_host" cluster meet "$(leader_ip "$index")" 6379; do
               sleep 5
             done
             index=$((index + 1))
+          done
+
+          until [ "$(redis_cli "$first_host" cluster info | awk -F: '/cluster_known_nodes/ { gsub(/\r/, "", $2); print $2 }')" = "$REDIS_LEADERS" ]; do
+            sleep 5
           done
           sleep 5
 
@@ -89,16 +102,25 @@ spec:
             start=$((index * 16384 / REDIS_LEADERS))
             end=$((((index + 1) * 16384 / REDIS_LEADERS) - 1))
             host="$(leader_host "$index")"
+            redis_cli "$host" cluster addslots $(seq "$start" "$end") || true
+            index=$((index + 1))
+          done
+
+          until [ "$(redis_cli "$first_host" cluster info | awk -F: '/cluster_slots_assigned/ { gsub(/\r/, "", $2); print $2 }')" = "16384" ]; do
+            sleep 5
+          done
+
+          index=0
+          while [ "$index" -lt "$REDIS_LEADERS" ]; do
+            host="$(leader_host "$index")"
             if [ -n "${REDIS_EXTERNAL_DOMAIN_SUFFIX:-}" ]; then
               redis_cli "$host" config set cluster-announce-hostname "{{ include "redis.fullname" . }}-leader-$index.${REDIS_EXTERNAL_DOMAIN_SUFFIX}" || true
               redis_cli "$host" config set cluster-preferred-endpoint-type hostname || true
               redis_cli "$host" config set cluster-announce-tls-port {{ get $externalAccess "port" | default 16379 }} || true
               redis_cli "$host" config set cluster-announce-port 0 || true
             fi
-            redis_cli "$host" cluster addslots $(seq "$start" "$end") || true
             index=$((index + 1))
           done
-
           redis_cli "$first_host" cluster info | grep 'cluster_state:ok'
         {{- if $tls.enabled }}
         volumeMounts:
