@@ -899,15 +899,15 @@ cassandra:
       # Cap the Cassandra JVM heap explicitly so the process leaves enough
       # headroom for native memory, TLS, off-heap usage, and the management API.
       jvmOptions:
-        heap_initial_size: "1024M"
-        heap_max_size: "1536M"
+        heap_initial_size: "768M"
+        heap_max_size: "1024M"
     resources:
       requests:
         cpu: "300m"
-        memory: "1536Mi"
+        memory: "768Mi"
       limits:
         cpu: "1000m"
-        memory: "3Gi"
+        memory: "2Gi"
     probes:
       # Cassandra first-node startup is slow with TLS, Medusa, and Longhorn.
       # Keep readiness fairly chatty, but delay liveness long enough that
