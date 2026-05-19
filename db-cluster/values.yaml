@@ -842,6 +842,7 @@ cassandra:
   connection:
     username: cassandra
     password: ""
+    keyspace: app_keyspace
     port: 19042
   credentials:
     # Kept for backward compatibility. cassandra.connection is used for new

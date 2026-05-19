@@ -1,0 +1,88 @@
+{{- $connection := .Values.connection | default dict -}}
+{{- $keyspace := get $connection "keyspace" | default "" -}}
+{{- if and .Values.enabled $keyspace }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "cassandra.fullname" . }}-keyspace-{{ $keyspace | sha256sum | trunc 8 }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: cassandra
+    app.kubernetes.io/instance: {{ include "cassandra.fullname" . }}
+    app.kubernetes.io/component: keyspace-init
+  annotations:
+    checksum/keyspace: {{ $keyspace | quote }}
+spec:
+  backoffLimit: 4
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cassandra
+        app.kubernetes.io/instance: {{ include "cassandra.fullname" . }}
+        app.kubernetes.io/component: keyspace-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: create-keyspace
+        image: {{ .Values.cluster.image }}
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: CASSANDRA_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "cassandra.secretName" . }}
+              key: username
+        - name: CASSANDRA_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "cassandra.secretName" . }}
+              key: password
+        - name: CASSANDRA_KEYSPACE
+          value: {{ $keyspace | quote }}
+        {{- if and .Values.tls.enabled (dig "clientEncryption" true .Values.tls) }}
+        - name: SSL_CERTFILE
+          value: /tls/cassandra.cer
+        {{- end }}
+        {{- if and .Values.tls.enabled (dig "clientEncryption" true .Values.tls) }}
+        volumeMounts:
+        - name: cassandra-client-ca
+          mountPath: /tls
+          readOnly: true
+        {{- end }}
+        command:
+        - /bin/sh
+        - -ec
+        - |
+          keyspace="${CASSANDRA_KEYSPACE}"
+          if ! printf '%s' "${keyspace}" | grep -Eq '^[A-Za-z][A-Za-z0-9_]{0,31}$'; then
+            echo "Invalid Cassandra keyspace '${keyspace}'. Use letters, numbers, and underscore; start with a letter; max 32 chars." >&2
+            exit 1
+          fi
+
+          host="{{ include "cassandra.clusterName" . }}-{{ include "cassandra.datacenter" . }}-service"
+          datacenter="{{ include "cassandra.datacenter" . }}"
+          ssl_args=""
+          {{- if and .Values.tls.enabled (dig "clientEncryption" true .Values.tls) }}
+          ssl_args="--ssl"
+          {{- end }}
+
+          cql="CREATE KEYSPACE IF NOT EXISTS ${keyspace} WITH replication = {'class': 'NetworkTopologyStrategy', '${datacenter}': {{ int (default 1 .Values.cluster.instances) }}} AND durable_writes = true;"
+          for attempt in $(seq 1 90); do
+            if cqlsh "${host}" 9042 ${ssl_args} -u "${CASSANDRA_USERNAME}" -p "${CASSANDRA_PASSWORD}" -e "${cql}"; then
+              echo "Cassandra keyspace '${keyspace}' is ready."
+              exit 0
+            fi
+            echo "Waiting for Cassandra to accept CQL connections (${attempt}/90)..."
+            sleep 10
+          done
+
+          echo "Timed out creating Cassandra keyspace '${keyspace}'." >&2
+          exit 1
+      {{- if and .Values.tls.enabled (dig "clientEncryption" true .Values.tls) }}
+      volumes:
+      - name: cassandra-client-ca
+        configMap:
+          name: {{ include "cassandra.fullname" . }}-client-ca
+      {{- end }}
+{{- end }}
