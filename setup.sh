@@ -1990,7 +1990,7 @@ EOF
         --namespace "$MINIO_NAMESPACE" \
         --create-namespace \
         -f "$MINIO_VALUES_FILE" \
-        --set "bucketProvisioning.bucket=$NAMESPACE" \
+        --set "bucketProvisioning.bucket=a8s-clusterdb-backup" \
         --wait --timeout 10m \
         || die "MinIO chart deploy failed"
 

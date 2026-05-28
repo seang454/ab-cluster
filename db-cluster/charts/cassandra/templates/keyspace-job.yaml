@@ -1,10 +1,14 @@
 {{- $connection := .Values.connection | default dict -}}
 {{- $keyspace := get $connection "keyspace" | default "" -}}
+{{- $replicationFactor := int (default 1 .Values.cluster.instances) -}}
+{{- if lt $replicationFactor 1 -}}
+{{- $replicationFactor = 1 -}}
+{{- end -}}
 {{- if and .Values.enabled $keyspace }}
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ include "cassandra.fullname" . }}-keyspace-{{ $keyspace | sha256sum | trunc 8 }}
+  name: {{ include "cassandra.fullname" . }}-keyspace-{{ printf "%s-%d" $keyspace $replicationFactor | sha256sum | trunc 8 }}
   namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/name: cassandra
@@ -12,6 +16,7 @@ metadata:
     app.kubernetes.io/component: keyspace-init
   annotations:
     checksum/keyspace: {{ $keyspace | quote }}
+    checksum/replication-factor: {{ $replicationFactor | quote }}
 spec:
   backoffLimit: 4
   ttlSecondsAfterFinished: 300
@@ -67,10 +72,10 @@ spec:
           ssl_args="--ssl"
           {{- end }}
 
-          cql="CREATE KEYSPACE IF NOT EXISTS ${keyspace} WITH replication = {'class': 'NetworkTopologyStrategy', '${datacenter}': {{ int (default 1 .Values.cluster.instances) }}} AND durable_writes = true;"
+          cql="CREATE KEYSPACE IF NOT EXISTS ${keyspace} WITH replication = {'class': 'NetworkTopologyStrategy', '${datacenter}': {{ $replicationFactor }}} AND durable_writes = true; ALTER KEYSPACE ${keyspace} WITH replication = {'class': 'NetworkTopologyStrategy', '${datacenter}': {{ $replicationFactor }}} AND durable_writes = true;"
           for attempt in $(seq 1 90); do
             if cqlsh "${host}" 9042 ${ssl_args} -u "${CASSANDRA_USERNAME}" -p "${CASSANDRA_PASSWORD}" -e "${cql}"; then
-              echo "Cassandra keyspace '${keyspace}' is ready."
+              echo "Cassandra keyspace '${keyspace}' is ready with replication factor {{ $replicationFactor }}."
               exit 0
             fi
             echo "Waiting for Cassandra to accept CQL connections (${attempt}/90)..."

@@ -297,10 +297,11 @@ for the other database operators so credentials stay outside the Helm values.
   at the new chart version and keep the override file to non-empty request
   fields only.
 - Backup-capable databases in this chart default to `backup.enabled: false`.
-  When enabled, they use the S3 layout
-  `s3://<namespace>/<releaseName>/<clusterName>`. PostgreSQL uses a full
-  `destinationPath`, while MongoDB, MySQL, and Cassandra use the namespace as
-  the bucket and `<releaseName>/<clusterName>` as the prefix.
+  When enabled, database-cluster backups use the shared bucket configured at
+  `global.backupBucket` (`a8s-clusterdb-backup` by default), with objects stored
+  under `<namespace>/<releaseName>/<clusterName>`. PostgreSQL uses a full
+  `destinationPath`, while MongoDB, MySQL, Redis, and Cassandra use the shared
+  bucket plus a namespaced prefix.
 - When you deploy the whole umbrella chart from an API, only pass overrides for
   the database blocks included in the request. Each subchart keeps its own
   logic and should only change if that block is enabled or explicitly
@@ -325,7 +326,7 @@ postgresql:
   backup:
     enabled: true
     provider: s3
-    destinationPath: "s3://{{ .Release.Namespace }}/{{ .Release.Name }}/{{ include \"postgresql.fullname\" . }}"
+    destinationPath: "s3://{{ .Values.global.backupBucket }}/{{ .Release.Namespace }}/{{ .Release.Name }}/{{ include \"postgresql.fullname\" . }}"
     endpointURL: "http://my-minio-minio.storage.svc:9000"
     s3Credentials:
       accessKeyId:

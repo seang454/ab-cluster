@@ -103,6 +103,6 @@ For a PostgreSQL operator that accepts S3-compatible storage settings, point bac
 The exact PostgreSQL backup YAML depends on the operator you use.
 
 When you deploy MinIO through `./setup.sh`, the script overrides
-`bucketProvisioning.bucket` to the active database namespace automatically.
-For manual installs, set `bucketProvisioning.bucket` yourself to match the
-namespace used by your database release.
+`bucketProvisioning.bucket` to the shared database-cluster backup bucket
+`a8s-clusterdb-backup` automatically. For manual installs, set
+`bucketProvisioning.bucket` to the same shared bucket name.

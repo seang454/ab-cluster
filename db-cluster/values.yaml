@@ -8,8 +8,11 @@
 
 global:
   # Optional identity key for one logical database cluster. When set, all
-  # database backup paths use this folder inside the namespace bucket.
+  # database backup paths use this folder inside the shared cluster backup bucket.
   clusterIdentity: ""
+  # One shared bucket for all database-cluster backups. Namespace/release folders
+  # are kept in each object prefix so deployments do not collide.
+  backupBucket: a8s-clusterdb-backup
 
 # =============================================================================
 # GENERIC INGRESS
@@ -228,11 +231,11 @@ postgresql:
 
   backup:
     # Default backup target is the MinIO release installed by setup.sh.
-    # Uses one bucket per Helm release, with a PostgreSQL-specific prefix.
+    # Uses one shared cluster bucket, with namespace/release prefixes.
     enabled: false
     # Supported providers in this chart: s3, gcs
     provider: s3
-    destinationPath: "s3://{{ .Release.Namespace }}/{{ default (printf \"%s/%s\" .Release.Name (include \"postgresql.fullname\" .)) .Values.global.clusterIdentity }}"
+    destinationPath: "s3://{{ .Values.global.backupBucket }}/{{ .Release.Namespace }}/{{ default (printf \"%s/%s\" .Release.Name (include \"postgresql.fullname\" .)) .Values.global.clusterIdentity }}"
     # Use endpointURL for S3-compatible targets such as MinIO.
     endpointURL: "http://my-minio-minio.storage.svc:9000"
     # Optional CA bundle secret for private/self-signed HTTPS endpoints.
@@ -478,8 +481,8 @@ mongodb:
     storageClass: longhorn
 
   backup:
-    # Percona backup jobs use the namespace as the bucket and store backups
-    # under <release>/<cluster>.
+    # Percona backup jobs use the shared cluster bucket and store backups
+    # under <namespace>/<release>/<cluster>.
     enabled: false
     image: percona/percona-backup-mongodb:2.12.0
     startingDeadlineSeconds: 600
@@ -490,11 +493,11 @@ mongodb:
       timeZone: UTC
       compressionType: gzip
     s3:
-      bucket: "{{ .Release.Namespace }}"
+      bucket: "{{ .Values.global.backupBucket }}"
       region: us-east-1
       credentialSecret: ""
       endpointURL: "http://my-minio-minio.storage.svc:9000"
-      prefix: "{{ default (printf \"%s/%s\" .Release.Name (include \"mongodb.fullname\" .)) .Values.global.clusterIdentity }}"
+      prefix: "{{ .Release.Namespace }}/{{ default (printf \"%s/%s\" .Release.Name (include \"mongodb.fullname\" .)) .Values.global.clusterIdentity }}"
 
   alerts:
     enabled: true
@@ -617,6 +620,7 @@ mysql:
     configuration: |
       [mysqld]
       admin-port=33062
+      skip-name-resolve
     # master01 does not have Longhorn CSI, so keep PXC members off it.
     excludeHostnames:
       - master01
@@ -645,7 +649,7 @@ mysql:
     storageClass: longhorn
 
   backup:
-    # PXC backups use the namespace as the bucket.
+    # PXC backups use the shared cluster bucket.
     enabled: false
     image: percona/percona-xtradb-cluster-operator:1.14.0-pxc8.0-backup-pxb8.0.35
     schedule:
@@ -654,11 +658,11 @@ mysql:
       timeZone: UTC
       keep: 7
     s3:
-      bucket: "{{ .Release.Namespace }}"
+      bucket: "{{ .Values.global.backupBucket }}"
       region: us-east-1
       credentialSecret: ""
       endpointURL: "http://my-minio-minio.storage.svc:9000"
-      prefix: "{{ default .Release.Name .Values.global.clusterIdentity }}"
+      prefix: "{{ .Release.Namespace }}/{{ default .Release.Name .Values.global.clusterIdentity }}"
   alerts:
     enabled: true
     prometheusRuleLabels:
@@ -790,12 +794,12 @@ redis:
       cron: "40 2 * * *"
       timeZone: UTC
     s3:
-      bucket: "{{ .Release.Namespace }}"
+      bucket: "{{ .Values.global.backupBucket }}"
       credentialSecret: ""
       accessKeyKey: root-user
       secretKeyKey: root-password
       endpointURL: "http://my-minio-minio.storage.svc:9000"
-      prefix: "{{ default (printf \"%s/%s\" .Release.Name (include \"redis.fullname\" .)) .Values.global.clusterIdentity }}"
+      prefix: "{{ .Release.Namespace }}/{{ default (printf \"%s/%s\" .Release.Name (include \"redis.fullname\" .)) .Values.global.clusterIdentity }}"
 
   exporter:
     # Redis metrics are exposed through the operator's native redis-exporter.
@@ -942,8 +946,8 @@ cassandra:
     storageClass: longhorn
 
   backup:
-    # Medusa uses the namespace as the bucket and stores backups under
-    # <release>/<cluster>.
+    # Medusa uses the shared cluster bucket and stores backups under
+    # <namespace>/<release>/<cluster>.
     enabled: false
     medusaImage: k8ssandra/medusa:0.14.0
     schedule:
@@ -954,10 +958,10 @@ cassandra:
       backupType: differential
     s3:
       provider: s3_compatible
-      bucket: "{{ .Release.Namespace }}"
+      bucket: "{{ .Values.global.backupBucket }}"
       region: us-east-1
       credentialSecret: ""
-      prefix: "{{ default (printf \"%s/%s\" .Release.Name (include \"cassandra.fullname\" .)) .Values.global.clusterIdentity }}"
+      prefix: "{{ .Release.Namespace }}/{{ default (printf \"%s/%s\" .Release.Name (include \"cassandra.fullname\" .)) .Values.global.clusterIdentity }}"
       host: my-minio-minio.storage.svc
       port: 9000
       secure: false
