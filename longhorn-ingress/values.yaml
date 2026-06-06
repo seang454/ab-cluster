@@ -1,13 +1,17 @@
 issuer:
+  enabled: false
   email: pengseangsim210@gmail.com
   name: letsencrypt-prod
   server: https://acme-v02.api.letsencrypt.org/directory
   ingressClass: nginx
 
 ingress:
-  host: longhorn.seang.shop
+  enabled: false
+  host: longhorn.autonomous-istad.com
   ingressClassName: nginx
-  tlsSecret: longhorn-tls
+  tls:
+    enabled: false
+    secretName: longhorn-tls
   serviceName: longhorn-frontend
   servicePort: 80
   annotations:

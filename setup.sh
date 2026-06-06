@@ -42,6 +42,8 @@ CERT_MANAGER_VERSION="${CERT_MANAGER_VERSION:-v1.15.3}"
 OPERATOR_INSTALLER="${OPERATOR_INSTALLER:-./install-operators.sh}"
 VALUES_FILE="${VALUES_FILE:-}"
 SERVICE_HTTPS_ENABLED="${SERVICE_HTTPS_ENABLED:-}"
+LONGHORN_INGRESS_ENABLED="${LONGHORN_INGRESS_ENABLED:-}"
+LONGHORN_PUBLIC_DOMAIN="${LONGHORN_PUBLIC_DOMAIN:-longhorn.autonomous-istad.com}"
 VAULT_PUBLIC_DOMAIN="${VAULT_PUBLIC_DOMAIN:-vault.autonomous-istad.com}"
 MINIO_PUBLIC_DOMAIN="${MINIO_PUBLIC_DOMAIN:-minio.autonomous-istad.com}"
 SERVICE_ACCESS_CONFIGURED=false
@@ -63,14 +65,39 @@ normalize_boolean() {
     esac
 }
 
+configure_longhorn_ingress_enabled() {
+    local configured="$LONGHORN_INGRESS_ENABLED"
+
+    if ! configured="$(normalize_boolean "$configured" 2>/dev/null)"; then
+        configured="$(awk '
+            /^[^[:space:]]/ {
+                section=$1
+                sub(/:$/, "", section)
+            }
+            section == "ingress" && /^[[:space:]]+enabled:/ {
+                value=$2
+                gsub(/"/, "", value)
+                print value
+                exit
+            }
+        ' ./longhorn-ingress/values.yaml 2>/dev/null)"
+        configured="$(normalize_boolean "${configured:-true}")" \
+            || die "longhorn-ingress/values.yaml ingress.enabled must be true or false."
+    fi
+
+    LONGHORN_INGRESS_ENABLED="$configured"
+    export LONGHORN_INGRESS_ENABLED
+}
+
 configure_service_access() {
     local answer domain
 
     [ "$SERVICE_ACCESS_CONFIGURED" = "true" ] && return 0
+    configure_longhorn_ingress_enabled
 
     if ! SERVICE_HTTPS_ENABLED="$(normalize_boolean "$SERVICE_HTTPS_ENABLED" 2>/dev/null)"; then
         if [ -t 0 ]; then
-            read -r -p "Enable HTTPS for Vault and MinIO public domains? [Y/n]: " answer
+            read -r -p "Enable HTTPS for public web service domains? [Y/n]: " answer
             SERVICE_HTTPS_ENABLED="$(normalize_boolean "${answer:-yes}")" \
                 || die "Please answer yes or no."
         else
@@ -79,6 +106,10 @@ configure_service_access() {
     fi
 
     if [ -t 0 ]; then
+        if [ "$LONGHORN_INGRESS_ENABLED" = "true" ]; then
+            read -r -p "Longhorn public domain [$LONGHORN_PUBLIC_DOMAIN]: " domain
+            LONGHORN_PUBLIC_DOMAIN="${domain:-$LONGHORN_PUBLIC_DOMAIN}"
+        fi
         read -r -p "Vault public domain [$VAULT_PUBLIC_DOMAIN]: " domain
         VAULT_PUBLIC_DOMAIN="${domain:-$VAULT_PUBLIC_DOMAIN}"
         read -r -p "MinIO public domain [$MINIO_PUBLIC_DOMAIN]: " domain
@@ -87,10 +118,15 @@ configure_service_access() {
 
     SERVICE_PUBLIC_SCHEME=http
     [ "$SERVICE_HTTPS_ENABLED" = "true" ] && SERVICE_PUBLIC_SCHEME=https
-    export SERVICE_HTTPS_ENABLED SERVICE_PUBLIC_SCHEME VAULT_PUBLIC_DOMAIN MINIO_PUBLIC_DOMAIN
+    export SERVICE_HTTPS_ENABLED SERVICE_PUBLIC_SCHEME LONGHORN_PUBLIC_DOMAIN VAULT_PUBLIC_DOMAIN MINIO_PUBLIC_DOMAIN
     SERVICE_ACCESS_CONFIGURED=true
 
     info "Public service access:"
+    if [ "$LONGHORN_INGRESS_ENABLED" = "true" ]; then
+        info "  Longhorn: $SERVICE_PUBLIC_SCHEME://$LONGHORN_PUBLIC_DOMAIN"
+    else
+        info "  Longhorn: ingress disabled"
+    fi
     info "  Vault: $SERVICE_PUBLIC_SCHEME://$VAULT_PUBLIC_DOMAIN"
     info "  MinIO: $SERVICE_PUBLIC_SCHEME://$MINIO_PUBLIC_DOMAIN"
 }
@@ -1330,33 +1366,47 @@ EOF
         kubectl get pods -n longhorn-system | grep -v Completed
     fi
 
-    log "[2.1/8] Longhorn TLS ingress"
+    configure_longhorn_ingress_enabled
+    if [ "$LONGHORN_INGRESS_ENABLED" != "true" ]; then
+        info "Longhorn ingress is disabled; skipping longhorn-ingress Helm release."
+        return 0
+    fi
+
+    configure_service_access
+    log "[2.1/8] Longhorn ingress"
     helm upgrade --install longhorn-ingress ./longhorn-ingress \
         --namespace longhorn-system \
-        --set ingress.host=longhorn.seang.shop \
-        --set ingress.tlsSecret=longhorn-tls \
+        --set "issuer.enabled=$SERVICE_HTTPS_ENABLED" \
+        --set "ingress.host=$LONGHORN_PUBLIC_DOMAIN" \
+        --set "ingress.tls.enabled=$SERVICE_HTTPS_ENABLED" \
+        --set ingress.tls.secretName=longhorn-tls \
         --wait \
         || die "longhorn-ingress install failed"
 
-    info "Waiting for Longhorn TLS secret to be issued..."
-    for i in $(seq 1 30); do
-        if kubectl get secret longhorn-tls -n longhorn-system >/dev/null 2>&1; then
-            ok "Longhorn TLS secret is ready"
-            return 0
-        fi
-        if ! kubectl get clusterissuer letsencrypt-prod >/dev/null 2>&1; then
-            die "Longhorn TLS secret was not issued because ClusterIssuer letsencrypt-prod does not exist."
-        fi
-        challenge_reason="$(kubectl get challenge -n longhorn-system \
-            -o jsonpath='{range .items[?(@.spec.dnsName=="longhorn.seang.shop")]}{.status.reason}{"\n"}{end}' \
-            2>/dev/null | head -n 1)"
-        if [ -n "$challenge_reason" ]; then
-            info "cert-manager challenge status: $challenge_reason"
-        fi
-        sleep 10
-    done
+    if [ "$SERVICE_HTTPS_ENABLED" = "true" ]; then
+        info "Waiting for Longhorn TLS secret to be issued..."
+        for i in $(seq 1 30); do
+            if kubectl get secret longhorn-tls -n longhorn-system >/dev/null 2>&1; then
+                ok "Longhorn TLS secret is ready"
+                return 0
+            fi
+            if ! kubectl get clusterissuer letsencrypt-prod >/dev/null 2>&1; then
+                die "Longhorn TLS secret was not issued because ClusterIssuer letsencrypt-prod does not exist."
+            fi
+            challenge_reason="$(kubectl get challenge -n longhorn-system \
+                -o jsonpath="{range .items[?(@.spec.dnsName=='$LONGHORN_PUBLIC_DOMAIN')]}{.status.reason}{'\\n'}{end}" \
+                2>/dev/null | head -n 1)"
+            if [ -n "$challenge_reason" ]; then
+                info "cert-manager challenge status: $challenge_reason"
+            fi
+            sleep 10
+        done
 
-    die "Longhorn TLS secret was not issued. Check cert-manager, DNS for longhorn.seang.shop, and ingress reachability."
+        die "Longhorn TLS secret was not issued. Check cert-manager, DNS for $LONGHORN_PUBLIC_DOMAIN, and ingress reachability."
+    fi
+
+    info "HTTPS disabled; skipping Longhorn certificate wait."
+    ok "Longhorn ingress ready"
 }
 
 # =============================================================================
@@ -2591,9 +2641,9 @@ usage() {
     echo "   This project uses standard Kubernetes Ingress for web UIs."
     echo "   setup installs ingress-nginx automatically unless your cluster"
     echo "   already provides an nginx IngressClass."
-    echo "   Interactive runs prompt for Vault/MinIO HTTPS and public domains."
+    echo "   Interactive runs prompt for web service HTTPS and public domains."
     echo "   Non-interactive runs can set SERVICE_HTTPS_ENABLED,"
-    echo "   VAULT_PUBLIC_DOMAIN, and MINIO_PUBLIC_DOMAIN in .env."
+    echo "   LONGHORN_PUBLIC_DOMAIN, VAULT_PUBLIC_DOMAIN, and MINIO_PUBLIC_DOMAIN in .env."
     echo ""
     echo "More detail: see HELP.md"
 }
