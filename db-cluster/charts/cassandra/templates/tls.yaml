@@ -1,7 +1,7 @@
 {{- if and .Values.tls.enabled .Values.tls.createSecrets }}
 {{- $ext := .Values.externalAccess | default dict -}}
 {{- $publicHosts := $ext.publicHostnames | default list -}}
-{{- $publicHost := "cassandra-db.seang.shop" -}}
+{{- $publicHost := "cassandra-db.autonomous-istad.com" -}}
 {{- if gt (len $publicHosts) 0 -}}
 {{- $publicHost = index $publicHosts 0 -}}
 {{- end -}}
@@ -88,7 +88,7 @@ spec:
         - -ec
         - |
           set -eu
-          host="${CASSANDRA_PUBLIC_HOST:-cassandra-db.seang.shop}"
+          host="${CASSANDRA_PUBLIC_HOST:-cassandra-db.autonomous-istad.com}"
           san_list="${CASSANDRA_SAN_LIST}"
           server_pass="${SERVER_KEYSTORE_PASSWORD}"
           server_trust_pass="${SERVER_TRUSTSTORE_PASSWORD}"

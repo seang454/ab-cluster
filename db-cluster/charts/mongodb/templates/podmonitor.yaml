@@ -19,7 +19,7 @@ spec:
     matchLabels:
       app.kubernetes.io/instance: {{ include "mongodb.fullname" . }}
       app.kubernetes.io/component: mongod
-      monitoring.seang.shop/mongodb-exporter: "true"
+      monitoring.autonomous-istad.com/mongodb-exporter: "true"
   podMetricsEndpoints:
     - port: mongodb-metrics
       path: /metrics

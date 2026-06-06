@@ -71,7 +71,7 @@ externalTcpProxy:
     enabled: false
     type: ClusterIP
   # Public DNS zone used by your external database hostnames.
-  clusterDomain: seang.shop
+  clusterDomain: autonomous-istad.com
   # Kubernetes service DNS suffix used for internal HAProxy backends.
   # This cluster uses the `benzcluster` DNS suffix for internal service names.
   kubeClusterDomain: benzcluster
@@ -151,7 +151,7 @@ postgresql:
     labels: {}
     updateStrategy: patch
     publicHostnames:
-      - postgres-db.seang.shop
+      - postgres-db.autonomous-istad.com
   tls:
     # Normal TLS for external clients; keep false only if you want mTLS.
     enabled: true
@@ -394,9 +394,9 @@ mongodb:
       basePort: 27017
       serviceType: ClusterIP
     publicHostnames:
-      - mongo-db-0.seang.shop
-      - mongo-db-1.seang.shop
-      - mongo-db-2.seang.shop
+      - mongo-db-0.autonomous-istad.com
+      - mongo-db-1.autonomous-istad.com
+      - mongo-db-2.autonomous-istad.com
   tls:
     # External replica-set access through the shared TCP proxy relies on TLS
     # SNI to route each public hostname to the correct MongoDB member. Keep TLS
@@ -567,7 +567,7 @@ mysql:
     # Add public DNS names here so cert-manager includes them in the database
     # server certificate SANs. Example: mysql-db.example.com
     publicHostnames:
-      - mysql-db.seang.shop
+      - mysql-db.autonomous-istad.com
   tls:
     enabled: true
     mode: certManager
@@ -727,7 +727,7 @@ redis:
     # Public hostname for Redis when exposing it outside the cluster.
     enabled: true
     publicHostnames:
-      - redis-db.seang.shop
+      - redis-db.autonomous-istad.com
   tls:
     enabled: true
     secretName: ""
@@ -857,7 +857,7 @@ cassandra:
     # Public hostname used by HAProxy and the TLS bootstrap job.
     enabled: true
     publicHostnames:
-      - cassandra-db.seang.shop
+      - cassandra-db.autonomous-istad.com
   tls:
     enabled: true
     # Encrypt client traffic; keep client cert auth off for normal external access.

@@ -42,7 +42,7 @@ spec:
     size: {{ $instances }}
     {{- if $exporterEnabled }}
     labels:
-      monitoring.seang.shop/mongodb-exporter: "true"
+      monitoring.autonomous-istad.com/mongodb-exporter: "true"
     {{- end }}
     {{- with .Values.cluster.env }}
     env:
