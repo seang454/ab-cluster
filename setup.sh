@@ -41,6 +41,10 @@ CERT_MANAGER_NAMESPACE="${CERT_MANAGER_NAMESPACE:-cert-manager}"
 CERT_MANAGER_VERSION="${CERT_MANAGER_VERSION:-v1.15.3}"
 OPERATOR_INSTALLER="${OPERATOR_INSTALLER:-./install-operators.sh}"
 VALUES_FILE="${VALUES_FILE:-}"
+SERVICE_HTTPS_ENABLED="${SERVICE_HTTPS_ENABLED:-}"
+VAULT_PUBLIC_DOMAIN="${VAULT_PUBLIC_DOMAIN:-vault.autonomous-istad.com}"
+MINIO_PUBLIC_DOMAIN="${MINIO_PUBLIC_DOMAIN:-minio.autonomous-istad.com}"
+SERVICE_ACCESS_CONFIGURED=false
 
 [ -f .env ] && { set -a; source .env; set +a; }
 
@@ -50,6 +54,46 @@ info() { echo "    $*"; }
 die()  { echo ""; echo "ERROR: $*"; exit 1; }
 
 KUBECTL_TIMEOUT="${KUBECTL_TIMEOUT:-15s}"
+
+normalize_boolean() {
+    case "${1:-}" in
+        true|TRUE|yes|YES|y|Y|1) printf 'true\n' ;;
+        false|FALSE|no|NO|n|N|0) printf 'false\n' ;;
+        *) return 1 ;;
+    esac
+}
+
+configure_service_access() {
+    local answer domain
+
+    [ "$SERVICE_ACCESS_CONFIGURED" = "true" ] && return 0
+
+    if ! SERVICE_HTTPS_ENABLED="$(normalize_boolean "$SERVICE_HTTPS_ENABLED" 2>/dev/null)"; then
+        if [ -t 0 ]; then
+            read -r -p "Enable HTTPS for Vault and MinIO public domains? [Y/n]: " answer
+            SERVICE_HTTPS_ENABLED="$(normalize_boolean "${answer:-yes}")" \
+                || die "Please answer yes or no."
+        else
+            SERVICE_HTTPS_ENABLED=true
+        fi
+    fi
+
+    if [ -t 0 ]; then
+        read -r -p "Vault public domain [$VAULT_PUBLIC_DOMAIN]: " domain
+        VAULT_PUBLIC_DOMAIN="${domain:-$VAULT_PUBLIC_DOMAIN}"
+        read -r -p "MinIO public domain [$MINIO_PUBLIC_DOMAIN]: " domain
+        MINIO_PUBLIC_DOMAIN="${domain:-$MINIO_PUBLIC_DOMAIN}"
+    fi
+
+    SERVICE_PUBLIC_SCHEME=http
+    [ "$SERVICE_HTTPS_ENABLED" = "true" ] && SERVICE_PUBLIC_SCHEME=https
+    export SERVICE_HTTPS_ENABLED SERVICE_PUBLIC_SCHEME VAULT_PUBLIC_DOMAIN MINIO_PUBLIC_DOMAIN
+    SERVICE_ACCESS_CONFIGURED=true
+
+    info "Public service access:"
+    info "  Vault: $SERVICE_PUBLIC_SCHEME://$VAULT_PUBLIC_DOMAIN"
+    info "  MinIO: $SERVICE_PUBLIC_SCHEME://$MINIO_PUBLIC_DOMAIN"
+}
 
 helm_release_exists() {
     local release="$1"
@@ -1575,6 +1619,7 @@ vault_install() {
 vault_configure() {
     log "[7/8] Installing Vault bootstrap/config chart..."
 
+    configure_service_access
     [ -d "$VAULT_CHART_DIR" ] || die "Vault chart not found: $VAULT_CHART_DIR"
     require_real_passwords
     : "${MINIO_ROOT_USER:?Add MINIO_ROOT_USER to .env}"
@@ -1602,6 +1647,8 @@ vault_configure() {
         --set "cassandra.password=$CASS_PASS" \
         --set "minio.rootUser=$MINIO_ROOT_USER" \
         --set "minio.rootPassword=$MINIO_ROOT_PASSWORD" \
+        --set "ingress.host=$VAULT_PUBLIC_DOMAIN" \
+        --set "ingress.tls.enabled=$SERVICE_HTTPS_ENABLED" \
         --wait --timeout 10m \
         || die "Vault bootstrap chart install failed"
 
@@ -1934,6 +1981,7 @@ operator_plugins() {
 minio_deploy() {
     log "[8.5/9] Deploying MinIO with Vault-backed credentials..."
 
+    configure_service_access
     [ -d "$MINIO_CHART_DIR" ] || die "MinIO chart not found: $MINIO_CHART_DIR"
     [ -f "$MINIO_VALUES_FILE" ] || die "MinIO values file not found: $MINIO_VALUES_FILE"
 
@@ -1991,31 +2039,39 @@ EOF
         --create-namespace \
         -f "$MINIO_VALUES_FILE" \
         --set "bucketProvisioning.bucket=a8s-clusterdb-backup" \
+        --set "issuer.enabled=$SERVICE_HTTPS_ENABLED" \
+        --set "ingress.host=$MINIO_PUBLIC_DOMAIN" \
+        --set "ingress.externalURL=$SERVICE_PUBLIC_SCHEME://$MINIO_PUBLIC_DOMAIN" \
+        --set "ingress.tls.enabled=$SERVICE_HTTPS_ENABLED" \
         --wait --timeout 10m \
         || die "MinIO chart deploy failed"
 
     wait_for_pods_ready "$MINIO_NAMESPACE" "app.kubernetes.io/name=minio,app.kubernetes.io/instance=$MINIO_RELEASE" 30 10 "MinIO pods" \
         || die "MinIO pods did not become Ready"
 
-    info "Waiting for MinIO TLS secret to be issued..."
-    for i in $(seq 1 30); do
-        if kubectl get secret minio-tls -n "$MINIO_NAMESPACE" >/dev/null 2>&1; then
-            ok "MinIO TLS secret is ready"
-            break
-        fi
-        if ! kubectl get clusterissuer letsencrypt-prod >/dev/null 2>&1; then
-            die "MinIO TLS secret was not issued because ClusterIssuer letsencrypt-prod does not exist."
-        fi
-        challenge_reason="$(kubectl get challenge -n "$MINIO_NAMESPACE" \
-            -o jsonpath='{range .items[?(@.spec.dnsName=="minio.seang.shop")]}{.status.reason}{"\n"}{end}' \
-            2>/dev/null | head -n 1)"
-        if [ -n "$challenge_reason" ]; then
-            info "cert-manager challenge status: $challenge_reason"
-        fi
-        sleep 10
-    done
-    kubectl get secret minio-tls -n "$MINIO_NAMESPACE" >/dev/null 2>&1 \
-        || die "MinIO TLS secret was not issued. Check cert-manager, DNS for minio.seang.shop, and ingress reachability."
+    if [ "$SERVICE_HTTPS_ENABLED" = "true" ]; then
+        info "Waiting for MinIO TLS secret to be issued..."
+        for i in $(seq 1 30); do
+            if kubectl get secret minio-tls -n "$MINIO_NAMESPACE" >/dev/null 2>&1; then
+                ok "MinIO TLS secret is ready"
+                break
+            fi
+            if ! kubectl get clusterissuer letsencrypt-prod >/dev/null 2>&1; then
+                die "MinIO TLS secret was not issued because ClusterIssuer letsencrypt-prod does not exist."
+            fi
+            challenge_reason="$(kubectl get challenge -n "$MINIO_NAMESPACE" \
+                -o jsonpath="{range .items[?(@.spec.dnsName=='$MINIO_PUBLIC_DOMAIN')]}{.status.reason}{'\\n'}{end}" \
+                2>/dev/null | head -n 1)"
+            if [ -n "$challenge_reason" ]; then
+                info "cert-manager challenge status: $challenge_reason"
+            fi
+            sleep 10
+        done
+        kubectl get secret minio-tls -n "$MINIO_NAMESPACE" >/dev/null 2>&1 \
+            || die "MinIO TLS secret was not issued. Check cert-manager, DNS for $MINIO_PUBLIC_DOMAIN, and ingress reachability."
+    else
+        info "HTTPS disabled; skipping MinIO certificate wait."
+    fi
 
     ok "MinIO deployed"
 }
@@ -2030,6 +2086,7 @@ setup() {
     echo "============================================="
 
     require_real_passwords
+    configure_service_access
     ensure_all_nodes_schedulable || die "Failed to make all nodes schedulable"
     preflight       || die "Step preflight failed"
     repos           || die "Step repos failed"
@@ -2534,6 +2591,9 @@ usage() {
     echo "   This project uses standard Kubernetes Ingress for web UIs."
     echo "   setup installs ingress-nginx automatically unless your cluster"
     echo "   already provides an nginx IngressClass."
+    echo "   Interactive runs prompt for Vault/MinIO HTTPS and public domains."
+    echo "   Non-interactive runs can set SERVICE_HTTPS_ENABLED,"
+    echo "   VAULT_PUBLIC_DOMAIN, and MINIO_PUBLIC_DOMAIN in .env."
     echo ""
     echo "More detail: see HELP.md"
 }

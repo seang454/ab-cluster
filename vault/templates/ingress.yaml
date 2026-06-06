@@ -4,14 +4,18 @@ kind: Ingress
 metadata:
   name: vault
   namespace: {{ .Release.Namespace }}
+  {{- if and .Values.ingress.tls.enabled .Values.ingress.annotations }}
   annotations:
     cert-manager.io/cluster-issuer: {{ index .Values.ingress.annotations "cert-manager.io/cluster-issuer" | default "letsencrypt-prod" }}
+  {{- end }}
 spec:
   ingressClassName: {{ .Values.ingress.ingressClassName | default "nginx" }}
+  {{- if .Values.ingress.tls.enabled }}
   tls:
   - hosts:
     - {{ .Values.ingress.host }}
     secretName: {{ .Values.ingress.tls.secretName | default "vault-tls" }}
+  {{- end }}
   rules:
   - host: {{ .Values.ingress.host }}
     http:

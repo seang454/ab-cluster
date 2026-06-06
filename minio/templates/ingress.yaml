@@ -5,7 +5,7 @@ metadata:
   name: {{ include "minio.fullname" . }}
   labels:
     {{- include "minio.labels" . | nindent 4 }}
-  {{- with .Values.ingress.annotations }}
+  {{- with and .Values.ingress.tls.enabled .Values.ingress.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
