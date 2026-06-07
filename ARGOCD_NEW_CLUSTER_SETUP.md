@@ -64,7 +64,7 @@ This creates or updates:
 Expected output:
 
 ```text
-Cluster 'https://34.50.95.205:6443' added
+Cluster 'https://34.142.132.80:6443' added
 ```
 
 ## 4. Verify the Registration
@@ -78,7 +78,7 @@ kubectl get secrets -n argocd -l argocd.argoproj.io/secret-type=cluster
 You should see a cluster secret such as:
 
 ```text
-cluster-34.50.95.205-xxxxxxxx
+cluster-34.142.132.80-xxxxxxxx
 ```
 
 Also check in the Argo UI under cluster settings.
@@ -87,14 +87,14 @@ You may see:
 
 ```text
 Name: k8s-cluster2
-URL:  https://34.50.95.205:6443
+URL:  https://34.142.132.80:6443
 Status: Successful
 ```
 
 This means:
 
 - Argo cluster name = `k8s-cluster2`
-- Kubernetes API server URL = `https://34.50.95.205:6443`
+- Kubernetes API server URL = `https://34.142.132.80:6443`
 
 They refer to the same cluster.
 
@@ -126,7 +126,7 @@ Example:
 
 ```yaml
 destination:
-  server: https://34.50.95.205:6443
+  server: https://34.142.132.80:6443
   namespace: argocd
 ```
 
@@ -174,7 +174,7 @@ You can use either:
 
 ```yaml
 destination:
-  server: https://34.50.95.205:6443
+  server: https://34.142.132.80:6443
   namespace: '{{path[3]}}'
 ```
 
@@ -261,7 +261,7 @@ spec:
             valueFiles:
               - $uservalues/{{path}}/values.yaml
       destination:
-        server: https://34.50.95.205:6443
+        server: https://34.142.132.80:6443
         namespace: '{{path[3]}}'
       syncPolicy:
         automated:
@@ -337,7 +337,7 @@ kubectl annotate application <child-app-name> -n argocd argocd.argoproj.io/refre
 Example:
 
 ```text
-unable to find destination server: there are no clusters with this name: https://34.50.95.205:6443
+unable to find destination server: there are no clusters with this name: https://34.142.132.80:6443
 ```
 
 Fix:
@@ -361,7 +361,7 @@ This is normal.
 Argo UI often displays:
 
 ```text
-https://34.50.95.205:6443
+https://34.142.132.80:6443
 ```
 
 while YAML can use:
@@ -380,5 +380,4 @@ Use this rule to reduce confusion:
   use `server: https://kubernetes.default.svc`
 - child database-cluster apps:
   prefer `name: k8s-cluster2`
-- use raw `server: https://34.50.95.205:6443` only if you have verified your Argo controller accepts it cleanly in that specific manifest path
-
+- use raw `server: https://34.142.132.80:6443` only if you have verified your Argo controller accepts it cleanly in that specific manifest path
